@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { LaptopScreenshotNotice, getStudentFirstName } from '../components/student/LaptopScreenshotNotice'
-import { mockSessions, mockCourses } from '../data/mock'
+import { submitAttendance, ApiError } from '../lib/api'
 import { usePageTitle } from '../hooks/usePageTitle'
 import toast from 'react-hot-toast'
 
@@ -74,31 +74,61 @@ export default function Landing() {
     }
     setStage('locating')
     setIsLaptop(!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent))
-    await new Promise(r => setTimeout(r, 700))
 
-    const session = mockSessions.find(s => s.pin === normalisePin(pin))
-    if (!session) {
-      setError('invalid_pin')
-      setStage('error')
-      return
-    }
-    if (session.status === 'upcoming') {
-      setError('window_not_open')
-      setStage('error')
-      return
-    }
-    if (session.status === 'closed' || session.status === 'processing') {
-      setError('window_closed')
-      setStage('error')
-      return
+    // Try to get GPS coordinates (best-effort)
+    let lat: number | undefined
+    let lng: number | undefined
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 }),
+      )
+      lat = pos.coords.latitude
+      lng = pos.coords.longitude
+    } catch {
+      // GPS unavailable — proceed without coordinates
     }
 
-    await new Promise(r => setTimeout(r, 1000))
-    const course = mockCourses.find(c => c.id === session.courseId)
-    setSessionInfo({ courseName: course?.name || 'Unknown Course', courseCode: course?.code || '' })
-    setRecordedAt(new Date())
-    setStage('success')
-    toast.success('Attendance recorded')
+    try {
+      const result = await submitAttendance({
+        cohortCode: normalisePin(pin),
+        studentId: studentId.trim().toUpperCase(),
+        lat,
+        lng,
+      })
+      setSessionInfo({ courseName: result.courseName, courseCode: result.courseCode })
+      setRecordedAt(new Date())
+      setStage('success')
+      toast.success('Attendance recorded')
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const errCode = (err.body?.error as string) ?? ''
+        if (errCode === 'no_open_session') {
+          setError('invalid_pin')
+        } else if (errCode === 'window_closed') {
+          setError('window_closed')
+        } else if (errCode === 'duplicate_submission') {
+          const body = err.body as { courseName?: string; courseCode?: string }
+          setSessionInfo({
+            courseName: body.courseName ?? '',
+            courseCode: body.courseCode ?? '',
+          })
+          setError('duplicate_device')
+        } else if (errCode === 'student_not_found') {
+          toast.error('Student ID not found. Check your ID and try again.')
+          setStage('form')
+          return
+        } else {
+          toast.error('Something went wrong. Please try again.')
+          setStage('form')
+          return
+        }
+      } else {
+        toast.error('Something went wrong. Please try again.')
+        setStage('form')
+        return
+      }
+      setStage('error')
+    }
   }
 
   const reset = () => {

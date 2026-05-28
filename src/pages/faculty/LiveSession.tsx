@@ -1,68 +1,133 @@
-import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useState, useEffect, useRef } from 'react'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Copy, CheckCheck, StopCircle, ArrowLeft } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
 import { ConfirmModal } from '../../components/ui/Modal'
-import { mockSessions, mockCourses, mockAttendance } from '../../data/mock'
+import { getSession, getLiveSession, closeSession, openLiveStream, ApiError } from '../../lib/api'
+import type { CourseWithSession } from '../../lib/api'
+import type { Session } from '../../types'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import toast from 'react-hot-toast'
 
 export default function LiveSession() {
   const { sessionId } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+
+  const locState = location.state as { session?: Session; course?: CourseWithSession } | null
+
+  const [session, setSession] = useState<Session | null>(locState?.session ?? null)
+  const [course] = useState(locState?.course ?? null)
+  const [count, setCount] = useState(locState?.session?.submissionsCount ?? 0)
+  const [timeLeft, setTimeLeft] = useState(0)
+  const [liveStatus, setLiveStatus] = useState<Session['status']>(locState?.session?.status ?? 'upcoming')
   const [copied, setCopied] = useState(false)
-  const [timeLeft, setTimeLeft] = useState(180)
-  const [count, setCount] = useState(0)
-  const [allowResubmit, setAllowResubmit] = useState(false)
   const [confirmClose, setConfirmClose] = useState(false)
+  const [closing, setClosing] = useState(false)
 
-  const session = mockSessions.find(s => s.id === sessionId) || mockSessions.find(s => s.status === 'open')!
-  const course = mockCourses.find(c => c.id === session?.courseId)
-  usePageTitle(`Live Session · ${course?.code ?? ''}`)
+  usePageTitle(`Live Session · ${course?.code ?? session?.courseId ?? ''}`)
 
-  // Simulate count going up
+  // Load session if not in navigation state
   useEffect(() => {
-    const total = mockAttendance.filter(r => r.sessionId === 'SES003' && r.status === 'recorded').length
-    let current = 0
-    const interval = setInterval(() => {
-      if (current < total) {
-        current++
-        setCount(current)
+    if (session || !sessionId) return
+    getSession(sessionId)
+      .then(setSession)
+      .catch((err) => {
+        if (!(err instanceof ApiError && err.status === 401)) {
+          toast.error('Session not found')
+          navigate(-1)
+        }
+      })
+  }, [sessionId])
+
+  // Open SSE stream when session is available
+  const streamRef = useRef<(() => void) | null>(null)
+
+  useEffect(() => {
+    if (!sessionId || !session) return
+
+    const close = openLiveStream(
+      sessionId,
+      (tick) => {
+        setCount(tick.submissionsCount)
+        setTimeLeft(Math.max(0, tick.secondsRemaining))
+        setLiveStatus(tick.status)
+      },
+      () => {
+        toast('Window closed — reviewing attendance…')
+        navigate(`/faculty/sessions/${sessionId}/review`, {
+          state: { session, course },
+        })
+      },
+    )
+    streamRef.current = close
+    return () => close()
+  }, [sessionId, !!session])
+
+  // Poll fallback to avoid stale UI if SSE drops.
+  useEffect(() => {
+    if (!sessionId || !session) return
+    const poll = setInterval(async () => {
+      try {
+        const live = await getLiveSession(sessionId)
+        setCount(live.submissionsCount)
+        setTimeLeft(Math.max(0, live.secondsRemaining))
+        setLiveStatus(live.status)
+      } catch {
+        // SSE is primary; ignore transient poll failures
       }
-    }, 1500)
-    return () => clearInterval(interval)
-  }, [])
+    }, 3000)
+    return () => clearInterval(poll)
+  }, [sessionId, !!session])
 
-  // Countdown — auto-close when it hits zero
+  // Local countdown (SSE ticks every 2s; this fills the gap)
   useEffect(() => {
-    if (timeLeft <= 0) {
-      const t = setTimeout(() => {
-        toast('Window closed — reviewing attendance...')
-        navigate(`/faculty/sessions/${session.id}/review`)
-      }, 1500)
-      return () => clearTimeout(t)
-    }
-    const t = setInterval(() => setTimeLeft(p => p - 1), 1000)
+    if (timeLeft <= 0) return
+    const t = setInterval(() => setTimeLeft(p => Math.max(0, p - 1)), 1000)
     return () => clearInterval(t)
-  }, [timeLeft])
+  }, [timeLeft > 0])
 
   const handleCopyPin = () => {
+    if (!session) return
     navigator.clipboard.writeText(session.pin).catch(() => {})
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
     toast.success('PIN copied')
   }
 
-  const handleClose = () => {
+  const handleClose = async () => {
+    if (!sessionId) return
     setConfirmClose(false)
-    toast.success('Session closed — processing attendance...')
-    navigate(`/faculty/sessions/${session.id}/review`)
+    setClosing(true)
+    try {
+      await closeSession(sessionId)
+      toast.success('Session closed — processing attendance…')
+      navigate(`/faculty/sessions/${sessionId}/review`, {
+        state: { session, course },
+      })
+    } catch (err) {
+      if (err instanceof ApiError && (err.body?.error as string) === 'already_closed') {
+        navigate(`/faculty/sessions/${sessionId}/review`, { state: { session, course } })
+      } else {
+        toast.error('Failed to close session')
+        setClosing(false)
+      }
+    }
   }
 
+  if (!session) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="w-8 h-8 rounded-full border-2 border-accent/30 border-t-accent animate-spin" />
+      </div>
+    )
+  }
+
+  const totalStudents = session.totalStudents || 1
+  const pct = Math.round((count / totalStudents) * 100)
   const mins = Math.floor(timeLeft / 60)
   const secs = timeLeft % 60
-  const pct = Math.round((count / session.totalStudents) * 100)
 
   return (
     <div className="flex flex-col h-full">
@@ -77,10 +142,10 @@ export default function LiveSession() {
           </button>
           <div>
             <p className="text-base font-semibold text-ink-primary">Live Session</p>
-            <p className="text-xs text-ink-muted">{course?.code} · {course?.name}</p>
+            <p className="text-xs text-ink-muted">{course?.code ?? ''} · {course?.name ?? ''}</p>
           </div>
         </div>
-        <Button variant="danger" size="sm" onClick={() => setConfirmClose(true)}>
+        <Button variant="danger" size="sm" onClick={() => setConfirmClose(true)} loading={closing}>
           <StopCircle size={14} />
           Close Window
         </Button>
@@ -128,7 +193,7 @@ export default function LiveSession() {
             <p className={`text-4xl font-bold font-mono ${timeLeft <= 60 ? 'text-danger' : 'text-ink-primary'}`}>
               {String(mins).padStart(2, '0')}:{String(secs).padStart(2, '0')}
             </p>
-            <p className="text-xs text-ink-muted mt-1">remaining</p>
+            <p className="text-xs text-ink-muted mt-1">{liveStatus === 'upcoming' ? 'until open' : 'remaining'}</p>
           </div>
         </motion.div>
 
@@ -147,29 +212,6 @@ export default function LiveSession() {
               transition={{ duration: 0.5, ease: 'easeOut' }}
             />
           </div>
-        </motion.div>
-
-        {/* Re-submissions toggle */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="flex items-center gap-3"
-        >
-          <span className="text-xs text-ink-muted">Allow re-submissions</span>
-          <button
-            onClick={() => {
-              setAllowResubmit(p => !p)
-              toast.success(!allowResubmit ? 'Re-submissions enabled' : 'Re-submissions disabled')
-            }}
-            className={`relative w-10 h-5 rounded-full transition-colors duration-200 flex-shrink-0 ${
-              allowResubmit ? 'bg-accent' : 'bg-bg-elevated border border-bg-border'
-            }`}
-          >
-            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform duration-200 ${
-              allowResubmit ? 'translate-x-5' : 'translate-x-0.5'
-            }`} />
-          </button>
         </motion.div>
 
       </div>

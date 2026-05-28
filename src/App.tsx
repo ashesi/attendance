@@ -14,6 +14,7 @@ import FacultyCourses from './pages/faculty/FacultyCourses'
 import CourseDetail from './pages/faculty/CourseDetail'
 import LiveSession from './pages/faculty/LiveSession'
 import PostSessionReview from './pages/faculty/PostSessionReview'
+import FacultyDashboard from './pages/faculty/FacultyDashboard'
 
 // Admin
 import AdminDashboard from './pages/admin/AdminDashboard'
@@ -53,7 +54,9 @@ export default function App() {
         <Route path="/faculty/courses/:courseId" element={<FacultyProtected><CourseDetail /></FacultyProtected>} />
         <Route path="/faculty/sessions/:sessionId/live" element={<FacultyProtected><LiveSession /></FacultyProtected>} />
         <Route path="/faculty/sessions/:sessionId/review" element={<FacultyProtected><PostSessionReview /></FacultyProtected>} />
-        <Route path="/faculty/dashboard" element={<Navigate to="/faculty/courses" replace />} />
+        {/* <Route path="/faculty/dashboard" element={<Navigate to="/faculty/courses" replace />} /> */}
+        <Route path="/faculty/dashboard" element={<FacultyProtected><FacultyDashboard /></FacultyProtected>} />
+
 
         {/* Admin */}
         <Route path="/admin/dashboard" element={<AdminProtected><AdminDashboard /></AdminProtected>} />

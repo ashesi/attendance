@@ -1,26 +1,59 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   BookOpen, Users, ClipboardCheck, TrendingUp,
-  Plus, ChevronRight, Clock,
+  ChevronRight,
 } from 'lucide-react'
 import { TopBar } from '../../components/layout/TopBar'
 import { StatCard, Card } from '../../components/ui/Card'
 import { Button } from '../../components/ui/Button'
 import { SessionStatusBadge } from '../../components/ui/Badge'
-import { mockCourses, mockSessions, mockAttendance } from '../../data/mock'
-import { useAppStore } from '../../store'
+import { getMyCourses, getCourseSessions } from '../../lib/api'
+import type { CourseWithSession } from '../../lib/api'
+import type { Session, AttendanceRecord } from '../../types'
 import { formatDate } from '../../lib/utils'
-import CreateSessionModal from './CreateSessionModal'
+import { usePageTitle } from '../../hooks/usePageTitle'
 
 export default function FacultyDashboard() {
-  const { userId } = useAppStore()
+  usePageTitle('Faculty Dashboard')
   const navigate = useNavigate()
-  const [showCreate, setShowCreate] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [myCourses, setMyCourses] = useState<CourseWithSession[]>([])
+  const [sessionMap, setSessionMap] = useState<Record<string, Session[]>>({})
+  const [attendanceMap] = useState<Record<string, AttendanceRecord[]>>({})
 
-  const myCourses = mockCourses.filter(c => c.facultyId === userId)
-  const mySessions = mockSessions.filter(s => myCourses.some(c => c.id === s.courseId))
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const courses = await getMyCourses()
+        if (cancelled) return
+        setMyCourses(courses)
+
+        const byCourse = await Promise.all(
+          courses.map(async (course) => ({
+            courseId: course.id,
+            sessions: await getCourseSessions(course.id),
+          })),
+        )
+        if (cancelled) return
+        setSessionMap(
+          Object.fromEntries(byCourse.map((item) => [item.courseId, item.sessions])),
+        )
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const mySessions = useMemo(
+    () => Object.values(sessionMap).flat(),
+    [sessionMap],
+  )
   const liveSession = mySessions.find(s => s.status === 'open')
   const recentSessions = mySessions.filter(s => s.status === 'closed').slice(0, 3)
 
@@ -40,9 +73,8 @@ export default function FacultyDashboard() {
         title="Dashboard"
         subtitle={`${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}`}
         actions={
-          <Button size="sm" onClick={() => setShowCreate(true)}>
-            <Plus size={14} />
-            New Session
+          <Button size="sm" onClick={() => navigate('/faculty/courses')}>
+            Go to Courses
           </Button>
         }
       />
@@ -62,7 +94,7 @@ export default function FacultyDashboard() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-ink-primary">
-                  Live session · {mockCourses.find(c => c.id === liveSession.courseId)?.name}
+                  Live session · {myCourses.find(c => c.id === liveSession.courseId)?.name}
                 </p>
                 <p className="text-xs text-ink-muted">
                   PIN <code className="font-mono text-success">{liveSession.pin}</code>
@@ -70,7 +102,18 @@ export default function FacultyDashboard() {
                 </p>
               </div>
             </div>
-            <Button size="sm" variant="success" onClick={() => navigate(`/faculty/sessions/${liveSession.id}/live`)}>
+            <Button
+              size="sm"
+              variant="success"
+              onClick={() =>
+                navigate(`/faculty/sessions/${liveSession.id}/live`, {
+                  state: {
+                    session: liveSession,
+                    course: myCourses.find(c => c.id === liveSession.courseId) ?? null,
+                  },
+                })
+              }
+            >
               Monitor
               <ChevronRight size={14} />
             </Button>
@@ -140,7 +183,7 @@ export default function FacultyDashboard() {
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-semibold text-ink-primary">Recent Sessions</p>
-              <Button variant="ghost" size="sm" onClick={() => navigate('/faculty/sessions')}>
+              <Button variant="ghost" size="sm" onClick={() => navigate('/faculty/courses')}>
                 View all <ChevronRight size={14} />
               </Button>
             </div>
@@ -154,7 +197,7 @@ export default function FacultyDashboard() {
                 {recentSessions.map(session => {
                   const course = myCourses.find(c => c.id === session.courseId)
                   const rate = Math.round((session.submissionsCount / session.totalStudents) * 100)
-                  const records = mockAttendance.filter(r => r.sessionId === session.id)
+                  const records = attendanceMap[session.id] ?? []
                   const excused = records.filter(r => r.status === 'absent_excused').length
                   const unexcused = records.filter(r => r.status === 'absent_unexcused').length
 
@@ -163,7 +206,14 @@ export default function FacultyDashboard() {
                       key={session.id}
                       hover
                       padding="sm"
-                      onClick={() => navigate(`/faculty/sessions/${session.id}/review`)}
+                      onClick={() =>
+                        navigate(`/faculty/sessions/${session.id}/review`, {
+                          state: {
+                            session,
+                            course: course ?? null,
+                          },
+                        })
+                      }
                     >
                       <div className="flex items-center justify-between">
                         <div>
@@ -190,8 +240,6 @@ export default function FacultyDashboard() {
           </motion.div>
         </div>
       </div>
-
-      <CreateSessionModal open={showCreate} onClose={() => setShowCreate(false)} />
     </div>
   )
 }

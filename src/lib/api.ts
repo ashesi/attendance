@@ -2,7 +2,13 @@ import { useAppStore } from '../store'
 import type { Session, AttendanceRecord, AttendanceStatus, AbsenceReason, Course } from '../types'
 import type { WeeklyAbsenceSummary } from './attendanceUtils'
 
-const BASE: string = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3001'
+const BASE: string =
+  import.meta.env.VITE_API_BASE_URL ??
+  (import.meta.env.DEV ? 'http://localhost:3001' : '')
+
+if (import.meta.env.PROD && !BASE) {
+  throw new Error('VITE_API_BASE_URL must be set for production builds')
+}
 
 // ─── Error type ───────────────────────────────────────────────────────────────
 

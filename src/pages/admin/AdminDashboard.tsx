@@ -1,19 +1,24 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronLeft, ChevronRight, Flag, AlertTriangle, Search, Pin, PinOff } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { mockSessions, mockAttendance, mockCourses, mockStudents } from '../../data/mock'
+import { getWeeklyAbsences, getAdminCourses, getAdminStudents, ApiError } from '../../lib/api'
+import type { AdminStudent } from '../../lib/api'
+import type { Course } from '../../types'
 import {
-  computeWeeklyAbsences,
-  availableWeekKeys,
   parseWeekKey,
   formatWeekRange,
   shiftWeek,
   getISOWeekStart,
+  weekKey,
   type WeeklyAbsenceSummary,
 } from '../../lib/attendanceUtils'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function currentWeekKey(): string {
+  return weekKey(new Date())
+}
 
 function relativeWeekLabel(key: string): string {
   const selectedMonday = parseWeekKey(key)
@@ -31,8 +36,7 @@ function relativeWeekLabel(key: string): string {
 
 export default function AdminDashboard() {
   const navigate = useNavigate()
-  const allWeeks = useMemo(() => availableWeekKeys(mockSessions), [])
-  const [selectedWeek, setSelectedWeek] = useState<string>(allWeeks[0] ?? '')
+  const [selectedWeek, setSelectedWeek] = useState<string>(currentWeekKey())
   const [courseFilter, setCourseFilter] = useState<string>('')
   const [studentSearch, setStudentSearch] = useState('')
   const [programFilter, setProgramFilter] = useState('')
@@ -45,48 +49,53 @@ export default function AdminDashboard() {
   const [pinnedStudentIds, setPinnedStudentIds] = useState<Set<string>>(new Set())
   const [isLoading, setIsLoading] = useState(true)
 
-  const studentMap = useMemo(
-    () => new Map(mockStudents.map(s => [s.id, s])),
-    [],
-  )
+  const [summaries, setSummaries] = useState<WeeklyAbsenceSummary[]>([])
+  const [courses, setCourses] = useState<Course[]>([])
+  const [students, setStudents] = useState<AdminStudent[]>([])
 
-  const summaries = useMemo(
-    () =>
-      selectedWeek
-        ? computeWeeklyAbsences(
-            selectedWeek,
-            courseFilter || null,
-            mockSessions,
-            mockAttendance,
-            mockCourses,
-          )
-        : [],
-    [selectedWeek, courseFilter],
-  )
-
+  // Load static data (courses + students) once
   useEffect(() => {
-    // Simulate async fetch for better loading feedback.
-    setIsLoading(true)
-    const t = window.setTimeout(() => setIsLoading(false), 220)
-    return () => window.clearTimeout(t)
-  }, [
-    selectedWeek,
-    courseFilter,
-    studentSearch,
-    programFilter,
-    yearFilter,
-    statusFilters.flagged,
-    statusFilters.recurring,
-    statusFilters.unexcused,
-  ])
+    Promise.all([
+      getAdminCourses(),
+      getAdminStudents({ limit: 1000 }),
+    ]).then(([c, s]) => {
+      setCourses(c)
+      setStudents(s.data)
+    }).catch(() => {})
+  }, [])
 
-  const weekIdx = allWeeks.indexOf(selectedWeek)
-  const canGoPrev = weekIdx < allWeeks.length - 1
-  const canGoNext = weekIdx > 0
+  // Load weekly absences whenever week/course changes
+  const loadAbsences = useCallback(() => {
+    setIsLoading(true)
+    getWeeklyAbsences(selectedWeek, courseFilter || undefined)
+      .then(setSummaries)
+      .catch((err) => {
+        if (!(err instanceof ApiError && err.status === 401)) {
+          setSummaries([])
+        }
+      })
+      .finally(() => setIsLoading(false))
+  }, [selectedWeek, courseFilter])
+
+  useEffect(() => { loadAbsences() }, [loadAbsences])
+
+  // Re-trigger loading indicator on filter changes (data is client-side filtered)
+  useEffect(() => {
+    setIsLoading(true)
+    const t = window.setTimeout(() => setIsLoading(false), 150)
+    return () => window.clearTimeout(t)
+  }, [studentSearch, programFilter, yearFilter, statusFilters.flagged, statusFilters.recurring, statusFilters.unexcused])
+
+  const studentMap = useMemo(
+    () => new Map(students.map(s => [s.id, s])),
+    [students],
+  )
+
+  const canGoNext = selectedWeek < currentWeekKey()
+  const canGoPrev = true
 
   function navigateWeek(dir: -1 | 1) {
-    const next = shiftWeek(selectedWeek, dir)
-    if (allWeeks.includes(next)) setSelectedWeek(next)
+    setSelectedWeek(prev => shiftWeek(prev, dir))
   }
 
   const weekLabel = selectedWeek ? formatWeekRange(parseWeekKey(selectedWeek)) : 'No data'
@@ -96,26 +105,25 @@ export default function AdminDashboard() {
   const recurringCount = summaries.filter(s => s.isRecurring && !s.isWeeklyFlagged).length
 
   const programs = useMemo(
-    () => Array.from(new Set(mockStudents.map(s => s.program))).sort(),
-    [],
+    () => Array.from(new Set(students.map(s => s.program).filter(Boolean))).sort(),
+    [students],
   )
   const years = useMemo(
-    () => Array.from(new Set(mockStudents.map(s => s.year))).sort((a, b) => a - b),
-    [],
+    () => Array.from(new Set(students.map(s => s.year).filter(Boolean))).sort((a, b) => a - b),
+    [students],
   )
 
   const filteredSummaries = useMemo(() => {
     const q = studentSearch.trim().toLowerCase()
     let list = summaries.filter((s) => {
       const student = studentMap.get(s.studentId)
-      if (!student) return false
 
       if (q) {
-        const haystack = `${s.studentName} ${student.program}`.toLowerCase()
+        const haystack = `${s.studentName} ${student?.program ?? ''}`.toLowerCase()
         if (!haystack.includes(q)) return false
       }
-      if (programFilter && student.program !== programFilter) return false
-      if (yearFilter && String(student.year) !== yearFilter) return false
+      if (programFilter && student?.program !== programFilter) return false
+      if (yearFilter && String(student?.year) !== yearFilter) return false
       if (statusFilters.flagged && !s.isWeeklyFlagged) return false
       if (statusFilters.recurring && !s.isRecurring) return false
       if (statusFilters.unexcused && s.unexcusedCount === 0) return false
@@ -162,8 +170,8 @@ export default function AdminDashboard() {
   }, [pinnedStudentIds])
 
   const pinnedStudents = useMemo(
-    () => mockStudents.filter((s) => pinnedStudentIds.has(s.id)),
-    [pinnedStudentIds],
+    () => students.filter((s) => pinnedStudentIds.has(s.id)),
+    [pinnedStudentIds, students],
   )
 
   return (
@@ -204,7 +212,7 @@ export default function AdminDashboard() {
             className="border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All courses</option>
-            {mockCourses.map(c => (
+            {courses.map(c => (
               <option key={c.id} value={c.id}>
                 {c.code} — {c.name}
               </option>
@@ -222,27 +230,31 @@ export default function AdminDashboard() {
             />
           </label>
 
-          <select
-            value={programFilter}
-            onChange={e => setProgramFilter(e.target.value)}
-            className="border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All programs</option>
-            {programs.map((program) => (
-              <option key={program} value={program}>{program}</option>
-            ))}
-          </select>
+          {programs.length > 0 && (
+            <select
+              value={programFilter}
+              onChange={e => setProgramFilter(e.target.value)}
+              className="border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">All programs</option>
+              {programs.map((program) => (
+                <option key={program} value={program}>{program}</option>
+              ))}
+            </select>
+          )}
 
-          <select
-            value={yearFilter}
-            onChange={e => setYearFilter(e.target.value)}
-            className="border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All years</option>
-            {years.map((year) => (
-              <option key={year} value={String(year)}>Year {year}</option>
-            ))}
-          </select>
+          {years.length > 0 && (
+            <select
+              value={yearFilter}
+              onChange={e => setYearFilter(e.target.value)}
+              className="border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">All years</option>
+              {years.map((year) => (
+                <option key={year} value={String(year)}>Year {year}</option>
+              ))}
+            </select>
+          )}
 
           <div className="flex items-center gap-2">
             <button
@@ -352,7 +364,7 @@ export default function AdminDashboard() {
                           <p className="text-sm font-medium text-gray-800 truncate">{student.name}</p>
                           <p className="text-xs text-gray-400 truncate">{student.program} · Year {student.year}</p>
                           <button
-                            onClick={() => navigate(`/history?id=${student.id}`)}
+                            onClick={() => navigate(`/history?id=${student.studentId}`)}
                             className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline"
                           >
                             View history
@@ -447,8 +459,6 @@ export default function AdminDashboard() {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-interface Student { id: string; name: string; program: string; year: number }
-
 function SessionDots({
   scheduledSessions,
   unexcusedCount,
@@ -470,7 +480,7 @@ function SessionDots({
             title="Unexcused absence"
           />
         ))}
-        {Array.from({ length: attended }).map((_, i) => (
+        {Array.from({ length: Math.max(0, attended) }).map((_, i) => (
           <span
             key={`a${i}`}
             className="w-2.5 h-2.5 rounded-full bg-emerald-400"
@@ -492,7 +502,7 @@ function AbsenceRow({
   onTogglePin,
 }: {
   summary: WeeklyAbsenceSummary
-  student: Student | undefined
+  student: AdminStudent | undefined
   isPinned: boolean
   onTogglePin: (studentId: string) => void
 }) {

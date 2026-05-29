@@ -1,11 +1,7 @@
 import { Camera, Clock, Info } from 'lucide-react'
-import { mockStudents } from '../../data/mock'
 
 export function getStudentFirstName(studentId: string): string {
-  const student = mockStudents.find(
-    s => s.id.toUpperCase() === studentId.trim().toUpperCase(),
-  )
-  return student?.name.split(' ')[0] ?? studentId.trim()
+  return studentId.trim() || 'there'
 }
 
 function formatRecordedAt(date: Date) {

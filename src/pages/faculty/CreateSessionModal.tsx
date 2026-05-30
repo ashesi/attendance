@@ -4,7 +4,7 @@ import { Modal } from '../../components/ui/Modal'
 import { Input, Select } from '../../components/ui/Input'
 import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
-import { createSession, ApiError } from '../../lib/api'
+import { createSession, ApiError, getApiErrorMessage } from '../../lib/api'
 import type { CourseWithSession } from '../../lib/api'
 import type { Session } from '../../types'
 import toast from 'react-hot-toast'
@@ -72,12 +72,14 @@ export default function CreateSessionModal({ open, onClose, defaultCourseId, cou
         minSamples: parseInt(minSamples) || 10,
         epsilon: 50,
       })
-      toast.success(`Session created · PIN: ${session.pin}`)
+      toast.success('Session created')
       onClose()
       onCreated?.(session)
     } catch (err) {
       if (err instanceof ApiError && (err.body?.error as string) === 'session_already_open') {
         toast.error('A session for this course is already open.')
+      } else if (err instanceof ApiError) {
+        toast.error(getApiErrorMessage(err))
       } else {
         toast.error('Failed to create session. Please try again.')
       }
@@ -92,7 +94,7 @@ export default function CreateSessionModal({ open, onClose, defaultCourseId, cou
         open={open && !showDisclaimer}
         onClose={onClose}
         title="Create Session"
-        description="A unique PIN will be generated for students to submit attendance"
+        description="Students submit attendance using the course code and their student ID"
         size="md"
         footer={
           <>

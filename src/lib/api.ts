@@ -12,12 +12,26 @@ if (import.meta.env.PROD && !BASE) {
 
 // ─── Error type ───────────────────────────────────────────────────────────────
 
+/** User-facing message from a failed API response (`message`, else `error`). */
+export function getApiErrorMessage(
+  err: { status: number; body: Record<string, unknown> },
+): string {
+  const { body } = err
+  if (typeof body.message === 'string' && body.message.trim()) {
+    return body.message
+  }
+  if (typeof body.error === 'string' && body.error.trim()) {
+    return body.error
+  }
+  return 'Something went wrong. Please try again.'
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
     public body: Record<string, unknown>,
   ) {
-    super(`API ${status}: ${(body?.error as string) ?? 'Unknown error'}`)
+    super(getApiErrorMessage({ status, body }))
   }
 }
 
@@ -169,7 +183,6 @@ export type CourseWithSession = Course & {
     windowCloseTime: string
     submissionsCount: number
     totalStudents: number
-    pin: string
   } | null
 }
 

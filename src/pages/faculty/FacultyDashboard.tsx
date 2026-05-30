@@ -12,6 +12,7 @@ import { SessionStatusBadge } from '../../components/ui/Badge'
 import { getMyCourses, getCourseSessions } from '../../lib/api'
 import type { CourseWithSession } from '../../lib/api'
 import type { Session, AttendanceRecord } from '../../types'
+import { sortSessionsMostRecentFirst } from '../../lib/sessionUtils'
 import { formatDate } from '../../lib/utils'
 import { usePageTitle } from '../../hooks/usePageTitle'
 
@@ -23,30 +24,35 @@ export default function FacultyDashboard() {
   const [sessionMap, setSessionMap] = useState<Record<string, Session[]>>({})
   const [attendanceMap] = useState<Record<string, AttendanceRecord[]>>({})
 
+  const loadDashboard = async () => {
+    const courses = await getMyCourses()
+    setMyCourses(courses)
+    const byCourse = await Promise.all(
+      courses.map(async (course) => ({
+        courseId: course.id,
+        sessions: await getCourseSessions(course.id),
+      })),
+    )
+    setSessionMap(
+      Object.fromEntries(byCourse.map((item) => [item.courseId, item.sessions])),
+    )
+  }
+
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
-        const courses = await getMyCourses()
-        if (cancelled) return
-        setMyCourses(courses)
-
-        const byCourse = await Promise.all(
-          courses.map(async (course) => ({
-            courseId: course.id,
-            sessions: await getCourseSessions(course.id),
-          })),
-        )
-        if (cancelled) return
-        setSessionMap(
-          Object.fromEntries(byCourse.map((item) => [item.courseId, item.sessions])),
-        )
+        await loadDashboard()
       } finally {
         if (!cancelled) setLoading(false)
       }
     })()
+    const interval = setInterval(() => {
+      if (!cancelled) void loadDashboard().catch(() => {})
+    }, 5000)
     return () => {
       cancelled = true
+      clearInterval(interval)
     }
   }, [])
 
@@ -55,7 +61,9 @@ export default function FacultyDashboard() {
     [sessionMap],
   )
   const liveSession = mySessions.find(s => s.status === 'open')
-  const recentSessions = mySessions.filter(s => s.status === 'closed').slice(0, 3)
+  const recentSessions = sortSessionsMostRecentFirst(
+    mySessions.filter((s) => s.status === 'closed'),
+  ).slice(0, 3)
 
   const totalStudents = myCourses.reduce((sum, c) => sum + c.enrolledCount, 0)
   const closedSessions = mySessions.filter(s => s.status === 'closed')
@@ -97,7 +105,9 @@ export default function FacultyDashboard() {
                   Live session · {myCourses.find(c => c.id === liveSession.courseId)?.name}
                 </p>
                 <p className="text-xs text-ink-muted">
-                  PIN <code className="font-mono text-success">{liveSession.pin}</code>
+                  <code className="font-mono text-success">
+                    {myCourses.find((c) => c.id === liveSession.courseId)?.cohortCode}
+                  </code>
                   {' · '}{liveSession.submissionsCount}/{liveSession.totalStudents} submitted
                 </p>
               </div>

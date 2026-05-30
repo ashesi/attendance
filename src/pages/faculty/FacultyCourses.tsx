@@ -17,14 +17,27 @@ export default function FacultyCourses() {
   const [courses, setCourses] = useState<CourseWithSession[]>([])
 
   useEffect(() => {
-    getMyCourses()
-      .then(setCourses)
-      .catch((err) => {
-        if (!(err instanceof ApiError && err.status === 401)) {
+    let cancelled = false
+
+    const load = async (initial: boolean) => {
+      try {
+        const data = await getMyCourses()
+        if (!cancelled) setCourses(data)
+      } catch (err) {
+        if (!cancelled && !(err instanceof ApiError && err.status === 401)) {
           toast.error('Failed to load courses')
         }
-      })
-      .finally(() => setLoading(false))
+      } finally {
+        if (initial && !cancelled) setLoading(false)
+      }
+    }
+
+    void load(true)
+    const interval = setInterval(() => void load(false), 5000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
   }, [])
 
   return (

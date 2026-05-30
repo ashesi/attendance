@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   MapPin, CheckCircle2, AlertCircle, GraduationCap,
-  History, User, Settings, Clock, WifiOff,
+  History, Settings, Clock, WifiOff,
 } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { LaptopScreenshotNotice, getStudentFirstName } from '../components/student/LaptopScreenshotNotice'
-import { submitAttendance, ApiError } from '../lib/api'
+import { submitAttendance, ApiError, getApiErrorMessage } from '../lib/api'
 import { usePageTitle } from '../hooks/usePageTitle'
 import toast from 'react-hot-toast'
 
@@ -55,8 +55,12 @@ export default function Landing() {
   const [recordedAt, setRecordedAt] = useState<Date | null>(null)
   const studentIdRef = useRef<HTMLInputElement>(null)
 
-  const normalisePin = (raw: string) => raw.toUpperCase().replace(/\s/g, '')
-  const isReady = normalisePin(pin).length >= 4 && studentId.trim().length >= 3
+  const normaliseCourseCode = (raw: string) => raw.toUpperCase().replace(/\s/g, '')
+  const isReady = normaliseCourseCode(pin).length >= 4 && studentId.trim().length >= 3
+
+  const fieldLabelClass = 'text-xs font-semibold text-ink-secondary uppercase tracking-wider'
+  const fieldInputClass =
+    'w-full h-11 px-4 bg-bg-surface border border-bg-border rounded-xl text-sm font-mono text-ink-primary uppercase tracking-wide placeholder:font-sans placeholder:normal-case placeholder:tracking-normal placeholder:text-ink-muted focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/50'
 
   // Online / offline detection
   useEffect(() => {
@@ -90,7 +94,7 @@ export default function Landing() {
 
     try {
       const result = await submitAttendance({
-        cohortCode: normalisePin(pin),
+        cohortCode: normaliseCourseCode(pin),
         studentId: studentId.trim().toUpperCase(),
         lat,
         lng,
@@ -104,6 +108,8 @@ export default function Landing() {
         const errCode = (err.body?.error as string) ?? ''
         if (errCode === 'no_open_session') {
           setError('invalid_pin')
+        } else if (errCode === 'window_not_open') {
+          setError('window_not_open')
         } else if (errCode === 'window_closed') {
           setError('window_closed')
         } else if (errCode === 'duplicate_submission') {
@@ -118,7 +124,7 @@ export default function Landing() {
           setStage('form')
           return
         } else {
-          toast.error('Something went wrong. Please try again.')
+          toast.error(getApiErrorMessage(err))
           setStage('form')
           return
         }
@@ -203,14 +209,14 @@ export default function Landing() {
               transition={{ duration: 0.25 }}
               className="glass rounded-2xl p-5 flex flex-col gap-5"
             >
-              {/* Course code */}
               <div className="flex flex-col gap-2">
-                <label className="text-xs font-semibold text-ink-secondary uppercase tracking-wider">
-                  Course Code
+                <label htmlFor="course-code" className={fieldLabelClass}>
+                  Course code
                 </label>
                 <input
+                  id="course-code"
                   type="text"
-                  placeholder="e.g. CS201_A"
+                  placeholder="e.g. CS222A"
                   maxLength={12}
                   value={pin}
                   onChange={e => setPin(e.target.value.toUpperCase().replace(/\s/g, ''))}
@@ -220,29 +226,29 @@ export default function Landing() {
                   autoCorrect="off"
                   autoCapitalize="characters"
                   spellCheck={false}
-                  className="w-full text-center bg-bg-surface border border-bg-border rounded-xl px-4 py-3 text-xl font-bold text-ink-primary placeholder:text-ink-muted placeholder:text-base placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/50 tracking-widest font-mono"
+                  className={fieldInputClass}
                 />
               </div>
 
-              {/* Student ID */}
               <div className="flex flex-col gap-2">
-                <label className="text-xs font-semibold text-ink-secondary uppercase tracking-wider">
+                <label htmlFor="student-id" className={fieldLabelClass}>
                   Student ID
                 </label>
-                <div className="relative">
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted pointer-events-none">
-                    <User size={15} />
-                  </div>
-                  <input
-                    ref={studentIdRef}
-                    type="text"
-                    placeholder="e.g. STU001"
-                    value={studentId}
-                    onChange={e => setStudentId(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && isReady && handleRecord()}
-                    className="w-full pl-9 pr-4 py-2.5 h-11 bg-bg-surface border border-bg-border rounded-xl text-sm text-ink-primary placeholder:text-ink-muted focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/50 uppercase"
-                  />
-                </div>
+                <input
+                  id="student-id"
+                  ref={studentIdRef}
+                  type="text"
+                  placeholder="e.g. XXXX2028"
+                  maxLength={16}
+                  value={studentId}
+                  onChange={e => setStudentId(e.target.value.toUpperCase().replace(/\s/g, ''))}
+                  onKeyDown={e => e.key === 'Enter' && isReady && handleRecord()}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  className={fieldInputClass}
+                />
               </div>
 
               {/* CTA */}

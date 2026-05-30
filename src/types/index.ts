@@ -22,7 +22,7 @@ export interface Course {
 export interface Session {
   id: string
   courseId: string
-  pin: string
+  cohortCode: string
   date: string
   startTime: string
   windowOpenTime: string

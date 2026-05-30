@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { LaptopScreenshotNotice, getStudentFirstName } from '../components/student/LaptopScreenshotNotice'
-import { submitAttendance, ApiError } from '../lib/api'
+import { submitAttendance, ApiError, getApiErrorMessage } from '../lib/api'
 import { usePageTitle } from '../hooks/usePageTitle'
 import toast from 'react-hot-toast'
 
@@ -95,6 +95,7 @@ export default function Landing() {
         lat,
         lng,
       })
+      console.log('result', result)
       setSessionInfo({ courseName: result.courseName, courseCode: result.courseCode })
       setRecordedAt(new Date())
       setStage('success')
@@ -104,6 +105,8 @@ export default function Landing() {
         const errCode = (err.body?.error as string) ?? ''
         if (errCode === 'no_open_session') {
           setError('invalid_pin')
+        } else if (errCode === 'window_not_open') {
+          setError('window_not_open')
         } else if (errCode === 'window_closed') {
           setError('window_closed')
         } else if (errCode === 'duplicate_submission') {
@@ -118,7 +121,7 @@ export default function Landing() {
           setStage('form')
           return
         } else {
-          toast.error('Something went wrong. Please try again.')
+          toast.error(getApiErrorMessage(err))
           setStage('form')
           return
         }
@@ -210,7 +213,7 @@ export default function Landing() {
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. CS201_A"
+                  placeholder="e.g. CS201A"
                   maxLength={12}
                   value={pin}
                   onChange={e => setPin(e.target.value.toUpperCase().replace(/\s/g, ''))}
@@ -236,7 +239,7 @@ export default function Landing() {
                   <input
                     ref={studentIdRef}
                     type="text"
-                    placeholder="e.g. STU001"
+                    placeholder="e.g. XXXX2028"
                     value={studentId}
                     onChange={e => setStudentId(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && isReady && handleRecord()}

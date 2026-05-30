@@ -9,6 +9,7 @@ import { SessionRowSkeleton } from '../../components/ui/Skeleton'
 import { getMyCourses, getCourseSessions, deleteSession, ApiError } from '../../lib/api'
 import type { CourseWithSession } from '../../lib/api'
 import type { Session } from '../../types'
+import { groupSessionsByStatus } from '../../lib/sessionUtils'
 import { formatDate, cn } from '../../lib/utils'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import CreateSessionModal from './CreateSessionModal'
@@ -29,24 +30,31 @@ export default function CourseDetail() {
   useEffect(() => {
     if (!courseId) return
     let cancelled = false
-    setLoading(true)
 
-    Promise.all([getMyCourses(), getCourseSessions(courseId)])
-      .then(([courses, sess]) => {
+    const refresh = async (showLoading: boolean) => {
+      if (showLoading) setLoading(true)
+      try {
+        const [courses, sess] = await Promise.all([getMyCourses(), getCourseSessions(courseId)])
         if (cancelled) return
-        const c = courses.find(c => c.id === courseId)
+        const c = courses.find((co) => co.id === courseId)
         setCourse(c ?? null)
         setSessions(sess)
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return
         if (!(err instanceof ApiError && err.status === 401)) {
           toast.error('Failed to load course')
         }
-      })
-      .finally(() => { if (!cancelled) setLoading(false) })
+      } finally {
+        if (!cancelled && showLoading) setLoading(false)
+      }
+    }
 
-    return () => { cancelled = true }
+    void refresh(true)
+    const interval = setInterval(() => void refresh(false), 5000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
   }, [courseId])
 
   const handleCancel = async () => {
@@ -62,11 +70,7 @@ export default function CourseDetail() {
     }
   }
 
-  const grouped = {
-    open: sessions.filter(s => s.status === 'open'),
-    upcoming: sessions.filter(s => s.status === 'upcoming'),
-    closed: sessions.filter(s => s.status === 'closed'),
-  }
+  const grouped = groupSessionsByStatus(sessions)
 
   if (!loading && !course) return (
     <div className="flex items-center justify-center h-full">
@@ -116,7 +120,9 @@ export default function CourseDetail() {
                   <div className="w-2.5 h-2.5 rounded-full bg-success" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-ink-primary">Live now · PIN <code className="font-mono text-success">{session.pin}</code></p>
+                  <p className="text-sm font-semibold text-ink-primary">
+                    Live now · <code className="font-mono text-success">{course?.cohortCode}</code>
+                  </p>
                   <p className="text-xs text-ink-muted mt-0.5">
                     {session.submissionsCount} of {session.totalStudents} submitted · closes {session.windowCloseTime}
                   </p>
@@ -204,7 +210,7 @@ export default function CourseDetail() {
         title="Cancel this session?"
         message={
           <p>
-            The session for <strong>{formatDate(cancelTarget?.date || '')}</strong> (PIN <code className="font-mono text-ink-secondary bg-bg-elevated px-1 py-0.5 rounded">{cancelTarget?.pin}</code>) will be cancelled and removed.
+            The session for <strong>{formatDate(cancelTarget?.date || '')}</strong> will be cancelled and removed.
             Students will not be able to submit attendance.
           </p>
         }
@@ -260,9 +266,6 @@ function SessionRow({
         </div>
         <p className="text-xs text-ink-muted mt-0.5">
           Window {session.windowOpenTime}–{session.windowCloseTime}
-          {session.status !== 'upcoming' && (
-            <> · PIN <code className="font-mono text-ink-secondary">{session.pin}</code></>
-          )}
         </p>
       </div>
 

@@ -53,6 +53,7 @@ export default function LiveSession() {
         setCount(tick.submissionsCount)
         setTimeLeft(Math.max(0, tick.secondsRemaining))
         setLiveStatus(tick.status)
+        setSession((prev) => (prev ? { ...prev, status: tick.status } : prev))
       },
       () => {
         toast('Window closed — reviewing attendance…')
@@ -74,6 +75,7 @@ export default function LiveSession() {
         setCount(live.submissionsCount)
         setTimeLeft(Math.max(0, live.secondsRemaining))
         setLiveStatus(live.status)
+        setSession((prev) => (prev ? { ...prev, status: live.status } : prev))
       } catch {
         // SSE is primary; ignore transient poll failures
       }
@@ -87,14 +89,6 @@ export default function LiveSession() {
     const t = setInterval(() => setTimeLeft(p => Math.max(0, p - 1)), 1000)
     return () => clearInterval(t)
   }, [timeLeft > 0])
-
-  const handleCopyPin = () => {
-    if (!session) return
-    navigator.clipboard.writeText(session.pin).catch(() => {})
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-    toast.success('PIN copied')
-  }
 
   const handleClose = async () => {
     if (!sessionId) return
@@ -128,6 +122,7 @@ export default function LiveSession() {
   const pct = Math.round((count / totalStudents) * 100)
   const mins = Math.floor(timeLeft / 60)
   const secs = timeLeft % 60
+  const courseCode = course?.cohortCode ?? session.cohortCode
 
   return (
     <div className="flex flex-col h-full">
@@ -141,7 +136,17 @@ export default function LiveSession() {
             <ArrowLeft size={16} />
           </button>
           <div>
-            <p className="text-base font-semibold text-ink-primary">Live Session</p>
+            <div className="flex items-center gap-2">
+              <p className="text-base font-semibold text-ink-primary">
+                {liveStatus === 'upcoming' ? 'Session' : 'Live Session'}
+              </p>
+              {liveStatus === 'open' && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-success bg-success/10 border border-success/20 px-2 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+                  Live
+                </span>
+              )}
+            </div>
             <p className="text-xs text-ink-muted">{course?.code ?? ''} · {course?.name ?? ''}</p>
           </div>
         </div>
@@ -154,23 +159,18 @@ export default function LiveSession() {
       {/* Body — centered */}
       <div className="flex-1 flex flex-col items-center justify-center p-6 gap-8">
 
-        {/* PIN */}
+        {/* Course code for student check-in */}
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
           className="text-center"
         >
-          <p className="text-xs font-semibold text-ink-muted uppercase tracking-widest mb-3">Session PIN</p>
-          <p className="text-6xl font-black text-accent tracking-[0.35em] font-mono leading-none select-all cursor-text">
-            {session.pin}
+          <p className="text-xs font-semibold text-ink-muted uppercase tracking-widest mb-3">Course code</p>
+          <p className="text-5xl sm:text-6xl font-black text-accent tracking-[0.2em] font-mono leading-none select-all cursor-text">
+            {courseCode}
           </p>
-          <button
-            onClick={handleCopyPin}
-            className="mt-3 flex items-center gap-1.5 text-xs text-ink-muted hover:text-ink-secondary transition-colors mx-auto"
-          >
-            {copied ? <CheckCheck size={13} className="text-success" /> : <Copy size={13} />}
-            {copied ? 'Copied' : 'Copy PIN'}
-          </button>
+          <p className="text-xs text-ink-muted mt-2 max-w-xs mx-auto">
+          </p>
         </motion.div>
 
         {/* Count + timer */}

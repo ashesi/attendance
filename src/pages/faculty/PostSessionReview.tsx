@@ -78,7 +78,7 @@ export default function PostSessionReview() {
   const filtered = records
     .filter(r => {
       const matchSearch = r.studentName.toLowerCase().includes(search.toLowerCase()) ||
-        r.studentId.toLowerCase().includes(search.toLowerCase())
+        r.studentCode.toLowerCase().includes(search.toLowerCase())
       const matchFilter = filter === 'all' || r.status === filter
       return matchSearch && matchFilter
     })
@@ -166,9 +166,9 @@ export default function PostSessionReview() {
             <div>
               <p className="text-sm font-semibold text-ink-primary">DBSCAN completed</p>
               <p className="text-xs text-ink-secondary mt-0.5">
-                Largest cluster: <strong className="text-success">{stats.recorded} students</strong>
+                <strong className="text-success">{stats.recorded} students</strong> in attendance cluster
                 {session && <> · ε = {session.epsilon}m · min_samples = {session.minSamples}</>}
-                {' · '}Outliers excluded as absent
+                {' · '}Isolated GPS noise points marked absent
               </p>
             </div>
           </motion.div>
@@ -233,7 +233,7 @@ export default function PostSessionReview() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-ink-primary truncate">{record.studentName}</p>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <p className="text-xs text-ink-muted">{record.studentId}</p>
+                      <p className="text-xs text-ink-muted">{record.studentCode}</p>
                       {record.submittedAt && (
                         <span className="flex items-center gap-1 text-xs text-ink-muted">
                           <Clock size={11} />

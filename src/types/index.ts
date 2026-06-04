@@ -37,7 +37,8 @@ export interface Session {
 export interface AttendanceRecord {
   id: string
   sessionId: string
-  studentId: string
+  studentId: string    // MongoDB ObjectId — use studentCode for display
+  studentCode: string  // human-readable student ID (e.g. "UG0012345")
   studentName: string
   status: AttendanceStatus
   submittedAt?: string

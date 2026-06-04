@@ -11,6 +11,37 @@ import { submitAttendance, ApiError, getApiErrorMessage } from '../lib/api'
 import { usePageTitle } from '../hooks/usePageTitle'
 import toast from 'react-hot-toast'
 
+/**
+ * Returns a stable device fingerprint (SHA-256 hex, truncated to 32 chars).
+ *
+ * Mixes a persistent random ID stored in localStorage (survives page reloads
+ * but not incognito/cleared storage) with immutable browser properties
+ * (screen size, language, timezone, hardware concurrency). Together these
+ * make it meaningfully harder to submit on behalf of a classmate within the
+ * same session without changing devices or browsers.
+ */
+async function getDeviceFingerprint(): Promise<string> {
+  let persistentId = localStorage.getItem('attn_device_id')
+  if (!persistentId) {
+    persistentId = crypto.randomUUID()
+    localStorage.setItem('attn_device_id', persistentId)
+  }
+  const components = [
+    persistentId,
+    navigator.userAgent,
+    navigator.language,
+    `${screen.width}x${screen.height}`,
+    String(screen.colorDepth),
+    String(new Date().getTimezoneOffset()),
+    String(navigator.hardwareConcurrency ?? ''),
+  ].join('||')
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(components))
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32)
+}
+
 function getGreeting() {
   const h = new Date().getHours()
   if (h >= 5 && h < 12) return 'Good morning'
@@ -19,7 +50,7 @@ function getGreeting() {
   return 'Hey there'
 }
 
-type Stage = 'form' | 'locating' | 'success' | 'error'
+type Stage = 'form' | 'locating' | 'location_blocked' | 'success' | 'error'
 type ErrorCode = 'window_closed' | 'window_not_open' | 'duplicate_device' | 'invalid_pin'
 
 const ERROR_MESSAGES: Record<ErrorCode, { title: string; body: string; soft?: boolean }> = {
@@ -36,9 +67,8 @@ const ERROR_MESSAGES: Record<ErrorCode, { title: string; body: string; soft?: bo
     body: "Attendance for this session has already closed. If you were in class, speak to your lecturer.",
   },
   duplicate_device: {
-    title: "Already recorded",
-    body: "This device has already submitted attendance for this session. You're all set!",
-    soft: true,
+    title: "Device already used",
+    body: "Attendance has already been submitted from this device for this session. Each device can only be used once per session.",
   },
 }
 
@@ -48,6 +78,7 @@ export default function Landing() {
   const [pin, setPin] = useState('')
   const [studentId, setStudentId] = useState('')
   const [stage, setStage] = useState<Stage>('form')
+  const [locationBlockedReason, setLocationBlockedReason] = useState<'denied' | 'unavailable' | null>(null)
   const [error, setError] = useState<ErrorCode | null>(null)
   const [sessionInfo, setSessionInfo] = useState<{ courseName: string; courseCode: string } | null>(null)
   const [isOnline, setIsOnline] = useState(navigator.onLine)
@@ -79,18 +110,34 @@ export default function Landing() {
     setStage('locating')
     setIsLaptop(!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent))
 
-    // Try to get GPS coordinates (best-effort)
-    let lat: number | undefined
-    let lng: number | undefined
+    // GPS is required — attendance cannot be submitted without coordinates.
+    // If the student denies permission or the device has no geolocation, show a
+    // blocking screen with instructions and do not submit.
+    if (!navigator.geolocation) {
+      setLocationBlockedReason('unavailable')
+      setStage('location_blocked')
+      return
+    }
+
+    let lat: number
+    let lng: number
     try {
       const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 }),
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          timeout: 10000,
+          enableHighAccuracy: true,
+        }),
       )
       lat = pos.coords.latitude
       lng = pos.coords.longitude
-    } catch {
-      // GPS unavailable — proceed without coordinates
+    } catch (geoErr) {
+      const code = (geoErr as GeolocationPositionError).code
+      setLocationBlockedReason(code === 1 ? 'denied' : 'unavailable')
+      setStage('location_blocked')
+      return
     }
+
+    const deviceFingerprint = await getDeviceFingerprint().catch(() => undefined)
 
     try {
       const result = await submitAttendance({
@@ -98,6 +145,7 @@ export default function Landing() {
         studentId: studentId.trim().toUpperCase(),
         lat,
         lng,
+        deviceFingerprint,
       })
       setSessionInfo({ courseName: result.courseName, courseCode: result.courseCode })
       setRecordedAt(new Date())
@@ -112,6 +160,8 @@ export default function Landing() {
           setError('window_not_open')
         } else if (errCode === 'window_closed') {
           setError('window_closed')
+        } else if (errCode === 'duplicate_device') {
+          setError('duplicate_device')
         } else if (errCode === 'duplicate_submission') {
           const body = err.body as { courseName?: string; courseCode?: string }
           setSessionInfo({
@@ -141,6 +191,7 @@ export default function Landing() {
     setPin('')
     setStudentId('')
     setStage('form')
+    setLocationBlockedReason(null)
     setError(null)
     setSessionInfo(null)
     setRecordedAt(null)
@@ -283,8 +334,10 @@ export default function Landing() {
                 </div>
               </div>
               <div className="text-center">
-                <p className="font-semibold text-ink-primary">Verifying location</p>
-                <p className="text-sm text-ink-secondary mt-1">Capturing GPS coordinates...</p>
+                <p className="font-semibold text-ink-primary">Requesting location</p>
+                <p className="text-sm text-ink-secondary mt-1">
+                  Tap <strong>"Allow"</strong> when your browser asks for location access
+                </p>
               </div>
               <div className="flex gap-1.5">
                 {[0, 1, 2].map(i => (
@@ -296,6 +349,45 @@ export default function Landing() {
                   />
                 ))}
               </div>
+              <p className="text-xs text-ink-muted text-center max-w-[220px] leading-relaxed">
+                Location is required to verify you're in the classroom.
+              </p>
+            </motion.div>
+          )}
+
+          {stage === 'location_blocked' && (
+            <motion.div
+              key="location_blocked"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.2 }}
+              className="glass rounded-2xl p-8 flex flex-col items-center gap-4 text-center"
+            >
+              <div className="w-14 h-14 rounded-full bg-warning/10 border-2 border-warning/20 flex items-center justify-center">
+                <MapPin size={26} className="text-warning" />
+              </div>
+              <div>
+                <p className="font-bold text-lg text-warning">Location required</p>
+                <p className="text-sm text-ink-secondary mt-1.5 leading-relaxed">
+                  {locationBlockedReason === 'denied'
+                    ? 'You denied location access. Attendance cannot be submitted without GPS — it\'s needed to verify you\'re in the classroom.'
+                    : 'Your device or browser doesn\'t support location access, which is required to submit attendance.'}
+                </p>
+              </div>
+              {locationBlockedReason === 'denied' && (
+                <div className="w-full px-3 py-3 rounded-xl bg-bg-surface border border-bg-border text-left space-y-1.5">
+                  <p className="text-xs font-semibold text-ink-secondary">How to enable location:</p>
+                  <p className="text-xs text-ink-muted leading-relaxed">
+                    <strong>Chrome / Android:</strong> tap the lock icon in the address bar → Site settings → Location → Allow
+                  </p>
+                  <p className="text-xs text-ink-muted leading-relaxed">
+                    <strong>Safari / iPhone:</strong> Settings → Safari → Location → Allow or tap the <em>AA</em> icon in the address bar
+                  </p>
+                </div>
+              )}
+              <Button fullWidth variant="secondary" onClick={reset}>
+                Try again
+              </Button>
             </motion.div>
           )}
 

@@ -152,8 +152,8 @@ export async function getCourseAbsences(studentId: string, courseId: string) {
 export async function submitAttendance(body: {
   cohortCode: string
   studentId: string
-  lat?: number
-  lng?: number
+  lat: number
+  lng: number
   deviceFingerprint?: string
 }) {
   return apiFetch<{ status: string; courseName: string; courseCode: string }>(

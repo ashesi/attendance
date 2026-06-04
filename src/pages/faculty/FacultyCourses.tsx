@@ -4,23 +4,41 @@ import { motion } from 'framer-motion'
 import { BookOpen, Users, ChevronRight, Calendar } from 'lucide-react'
 import { SessionStatusBadge } from '../../components/ui/Badge'
 import { CourseCardSkeleton } from '../../components/ui/Skeleton'
-import { mockCourses, mockSessions } from '../../data/mock'
-import { useAppStore } from '../../store'
+import { getMyCourses, ApiError } from '../../lib/api'
+import type { CourseWithSession } from '../../lib/api'
 import { usePageTitle } from '../../hooks/usePageTitle'
-import { formatDate, cn } from '../../lib/utils'
+import { formatDate } from '../../lib/utils'
+import toast from 'react-hot-toast'
 
 export default function FacultyCourses() {
   usePageTitle('My Courses')
-  const { userId } = useAppStore()
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
+  const [courses, setCourses] = useState<CourseWithSession[]>([])
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 400)
-    return () => clearTimeout(t)
-  }, [])
+    let cancelled = false
 
-  const myCourses = mockCourses.filter(c => c.facultyId === userId)
+    const load = async (initial: boolean) => {
+      try {
+        const data = await getMyCourses()
+        if (!cancelled) setCourses(data)
+      } catch (err) {
+        if (!cancelled && !(err instanceof ApiError && err.status === 401)) {
+          toast.error('Failed to load courses')
+        }
+      } finally {
+        if (initial && !cancelled) setLoading(false)
+      }
+    }
+
+    void load(true)
+    const interval = setInterval(() => void load(false), 5000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [])
 
   return (
     <div className="flex flex-col h-full overflow-auto">
@@ -32,32 +50,10 @@ export default function FacultyCourses() {
       <div className="flex-1 p-6">
         <div className="flex flex-col gap-2 max-w-xl">
           {loading && [0, 1, 2].map(i => <CourseCardSkeleton key={i} />)}
-          {!loading && myCourses.map((course, i) => {
-            const sessions = mockSessions.filter(s => s.courseId === course.id)
-            const liveSession = sessions.find(s => s.status === 'open')
-            const nextUpcoming = sessions
-              .filter(s => s.status === 'upcoming')
-              .sort((a, b) => a.date.localeCompare(b.date))[0]
-
-            const closedSessions = sessions.filter(s => s.status === 'closed')
-            const attendanceRate = closedSessions.length > 0
-              ? Math.round(
-                  closedSessions.reduce((sum, s) => sum + (s.submissionsCount / s.totalStudents) * 100, 0)
-                  / closedSessions.length
-                )
-              : null
-
-            const rateColor = attendanceRate === null
-              ? 'bg-bg-border'
-              : attendanceRate >= 80 ? 'bg-success'
-              : attendanceRate >= 60 ? 'bg-warning'
-              : 'bg-danger'
-
-            const rateTextColor = attendanceRate === null
-              ? 'text-ink-muted'
-              : attendanceRate >= 80 ? 'text-success'
-              : attendanceRate >= 60 ? 'text-warning'
-              : 'text-danger'
+          {!loading && courses.map((course, i) => {
+            const ls = course.latestSession
+            const isLive = ls?.status === 'open'
+            const isUpcoming = ls?.status === 'upcoming'
 
             return (
               <motion.button
@@ -68,16 +64,6 @@ export default function FacultyCourses() {
                 onClick={() => navigate(`/faculty/courses/${course.id}`)}
                 className="w-full text-left flex items-center gap-3 p-4 rounded-2xl bg-bg-card border border-bg-border shadow-sm hover:border-accent/30 hover:bg-bg-elevated hover:shadow-md transition-all duration-200 group"
               >
-                {/* Attendance rate bar */}
-                <div className="relative w-1 self-stretch rounded-full bg-bg-elevated flex-shrink-0 overflow-hidden">
-                  {attendanceRate !== null && (
-                    <div
-                      className={cn('absolute bottom-0 left-0 w-full rounded-full', rateColor)}
-                      style={{ height: `${attendanceRate}%` }}
-                    />
-                  )}
-                </div>
-
                 <div className="w-9 h-9 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center flex-shrink-0">
                   <BookOpen size={16} className="text-accent" />
                 </div>
@@ -85,8 +71,8 @@ export default function FacultyCourses() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-xs font-mono text-ink-muted">{course.code}</p>
-                    {liveSession && <SessionStatusBadge status="open" />}
-                    {nextUpcoming && !liveSession && <SessionStatusBadge status="upcoming" />}
+                    {isLive && <SessionStatusBadge status="open" />}
+                    {isUpcoming && !isLive && <SessionStatusBadge status="upcoming" />}
                   </div>
                   <p className="text-sm font-semibold text-ink-primary mt-0.5 truncate">{course.name}</p>
                   <div className="flex items-center gap-3 mt-1">
@@ -94,30 +80,29 @@ export default function FacultyCourses() {
                       <Users size={10} />
                       {course.enrolledCount} students
                     </span>
-                    {nextUpcoming && !liveSession && (
+                    {isUpcoming && !isLive && ls && (
                       <span className="flex items-center gap-1 text-xs text-ink-muted">
                         <Calendar size={10} />
-                        Next: {formatDate(nextUpcoming.date)}
+                        Next: {formatDate(ls.date)}
                       </span>
                     )}
-                    {liveSession && (
+                    {isLive && ls && (
                       <span className="flex items-center gap-1 text-xs text-success font-medium">
-                        Live · closes {liveSession.windowCloseTime}
+                        Live · closes {ls.windowCloseTime}
                       </span>
                     )}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {attendanceRate !== null && (
-                    <p className={cn('text-sm font-bold', rateTextColor)}>{attendanceRate}%</p>
-                  )}
-                  <ChevronRight size={15} className="text-ink-muted group-hover:text-accent transition-colors" />
-                </div>
+                <ChevronRight size={15} className="text-ink-muted group-hover:text-accent transition-colors flex-shrink-0" />
               </motion.button>
             )
           })}
-          </div>
+
+          {!loading && courses.length === 0 && (
+            <p className="text-sm text-ink-muted text-center py-16">No courses assigned to your account.</p>
+          )}
+        </div>
       </div>
     </div>
   )

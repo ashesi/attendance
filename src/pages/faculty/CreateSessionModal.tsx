@@ -1,19 +1,20 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { Info, Clock, AlertTriangle, ChevronDown } from 'lucide-react'
 import { Modal } from '../../components/ui/Modal'
 import { Input, Select } from '../../components/ui/Input'
 import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
-import { mockCourses } from '../../data/mock'
-import { useAppStore } from '../../store'
-import { generatePIN } from '../../lib/utils'
+import { createSession, ApiError, getApiErrorMessage } from '../../lib/api'
+import type { CourseWithSession } from '../../lib/api'
+import type { Session } from '../../types'
 import toast from 'react-hot-toast'
 
 interface Props {
   open: boolean
   onClose: () => void
   defaultCourseId?: string
+  courseData?: CourseWithSession
+  onCreated?: (session: Session) => void
 }
 
 const MIN_SAMPLES_DISCLAIMER = `min_samples controls how many GPS points DBSCAN requires to form a "cluster" (group of students physically present together).
@@ -34,37 +35,23 @@ function todayISO(): string {
   return new Date().toISOString().split('T')[0]
 }
 
-// Extract default start time from course schedule string e.g. "Mon / Wed / Fri · 08:00–09:00"
 function defaultStartTime(schedule: string): string {
   const match = schedule.match(/(\d{2}:\d{2})/)
   return match ? match[1] : '08:00'
 }
 
-export default function CreateSessionModal({ open, onClose, defaultCourseId }: Props) {
-  const { userId } = useAppStore()
-  const navigate = useNavigate()
-  const myCourses = mockCourses.filter(c => c.facultyId === userId)
+export default function CreateSessionModal({ open, onClose, defaultCourseId, courseData, onCreated }: Props) {
+  const selectedCourse = courseData
 
-  const [courseId, setCourseId] = useState(defaultCourseId || myCourses[0]?.id || '')
   const [sessionDate, setSessionDate] = useState(todayISO())
-  const [classStartTime, setClassStartTime] = useState(() => {
-    const course = myCourses.find(c => c.id === (defaultCourseId || myCourses[0]?.id || ''))
-    return course ? defaultStartTime(course.schedule) : '08:00'
-  })
+  const [classStartTime, setClassStartTime] = useState(() =>
+    selectedCourse ? defaultStartTime(selectedCourse.schedule) : '08:00',
+  )
   const [windowDuration, setWindowDuration] = useState('5')
   const [minSamples, setMinSamples] = useState('10')
   const [showDisclaimer, setShowDisclaimer] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [loading, setLoading] = useState(false)
-
-  const selectedCourse = myCourses.find(c => c.id === courseId)
-
-  // When course changes, update the default start time from schedule
-  const handleCourseChange = (id: string) => {
-    setCourseId(id)
-    const course = myCourses.find(c => c.id === id)
-    if (course) setClassStartTime(defaultStartTime(course.schedule))
-  }
 
   const windowClose = addMinutes(classStartTime, parseInt(windowDuration) || 5)
 
@@ -75,14 +62,30 @@ export default function CreateSessionModal({ open, onClose, defaultCourseId }: P
   }
 
   const handleCreate = async () => {
-    if (!courseId) return
+    if (!defaultCourseId) return
     setLoading(true)
-    await new Promise(r => setTimeout(r, 800))
-    const pin = generatePIN()
-    toast.success(`Session created · PIN: ${pin}`)
-    setLoading(false)
-    onClose()
-    if (defaultCourseId) navigate(`/faculty/courses/${defaultCourseId}`)
+    try {
+      const session = await createSession(defaultCourseId, {
+        date: sessionDate,
+        startTime: classStartTime,
+        windowDuration: parseInt(windowDuration) || 5,
+        minSamples: parseInt(minSamples) || 10,
+        epsilon: 50,
+      })
+      toast.success('Session created')
+      onClose()
+      onCreated?.(session)
+    } catch (err) {
+      if (err instanceof ApiError && (err.body?.error as string) === 'session_already_open') {
+        toast.error('A session for this course is already open.')
+      } else if (err instanceof ApiError) {
+        toast.error(getApiErrorMessage(err))
+      } else {
+        toast.error('Failed to create session. Please try again.')
+      }
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -91,28 +94,18 @@ export default function CreateSessionModal({ open, onClose, defaultCourseId }: P
         open={open && !showDisclaimer}
         onClose={onClose}
         title="Create Session"
-        description="A unique PIN will be generated for students to submit attendance"
+        description="Students submit attendance using the course code and their student ID"
         size="md"
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-            <Button size="sm" onClick={handleCreate} loading={loading} disabled={!courseId}>
+            <Button size="sm" onClick={handleCreate} loading={loading} disabled={!defaultCourseId}>
               Create Session
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-4 py-2">
-          {/* Course selector — only show if no default */}
-          {!defaultCourseId && (
-            <Select
-              label="Course"
-              value={courseId}
-              onChange={e => handleCourseChange(e.target.value)}
-              options={myCourses.map(c => ({ value: c.id, label: `${c.code} · ${c.name}` }))}
-            />
-          )}
-
           {selectedCourse && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-bg-surface border border-bg-border">
               <Info size={13} className="text-ink-muted flex-shrink-0" />

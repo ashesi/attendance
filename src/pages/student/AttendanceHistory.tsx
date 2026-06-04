@@ -2,57 +2,10 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ChevronRight, GraduationCap, ArrowLeft, CheckCircle2 } from 'lucide-react'
-import { mockAttendance, mockSessions, mockCourses, mockStudents } from '../../data/mock'
-import type { AttendanceStatus, Session, AbsenceReason } from '../../types'
+import { getStudent, getStudentAbsences, ApiError } from '../../lib/api'
+import type { CourseAbsences, StudentInfo } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { usePageTitle } from '../../hooks/usePageTitle'
-
-interface CourseAbsences {
-  courseId: string
-  courseCode: string
-  courseName: string
-  absences: {
-    sessionId: string
-    date: string
-    status: AttendanceStatus
-    note?: string
-    absenceReason?: AbsenceReason
-    sessionStatus: Session['status']
-  }[]
-}
-
-function buildAbsenceHistory(studentId: string): CourseAbsences[] {
-  const records = mockAttendance.filter(r => r.studentId === studentId)
-  const courseMap: Record<string, CourseAbsences> = {}
-
-  for (const record of records) {
-    if (record.status !== 'absent_excused' && record.status !== 'absent_unexcused') continue
-
-    const session = mockSessions.find(s => s.id === record.sessionId)
-    if (!session || session.status !== 'closed') continue
-    const course = mockCourses.find(c => c.id === session.courseId)
-    if (!course) continue
-
-    if (!courseMap[course.id]) {
-      courseMap[course.id] = {
-        courseId: course.id,
-        courseCode: course.code,
-        courseName: course.name,
-        absences: [],
-      }
-    }
-    courseMap[course.id].absences.push({
-      sessionId: record.sessionId,
-      date: session.date,
-      status: record.status,
-      note: record.note,
-      absenceReason: record.absenceReason,
-      sessionStatus: session.status,
-    })
-  }
-
-  return Object.values(courseMap).sort((a, b) => a.courseCode.localeCompare(b.courseCode))
-}
 
 export default function AttendanceHistory() {
   usePageTitle('Absence History')
@@ -61,13 +14,48 @@ export default function AttendanceHistory() {
   const [searchId, setSearchId] = useState(searchParams.get('id') || '')
   const [queriedId, setQueriedId] = useState(searchParams.get('id') || '')
 
+  const [student, setStudent] = useState<StudentInfo | null>(null)
+  const [history, setHistory] = useState<CourseAbsences[]>([])
+  const [notFound, setNotFound] = useState(false)
+  const [fetching, setFetching] = useState(false)
+
   useEffect(() => {
     const id = searchParams.get('id')
     if (id) { setQueriedId(id); setSearchId(id) }
   }, [])
 
-  const student = mockStudents.find(s => s.id === queriedId)
-  const history = queriedId ? buildAbsenceHistory(queriedId) : []
+  useEffect(() => {
+    if (!queriedId) {
+      setStudent(null)
+      setHistory([])
+      setNotFound(false)
+      return
+    }
+    let cancelled = false
+    setFetching(true)
+    setNotFound(false)
+
+    Promise.all([
+      getStudent(queriedId),
+      getStudentAbsences(queriedId),
+    ])
+      .then(([s, h]) => {
+        if (cancelled) return
+        setStudent(s)
+        setHistory(h)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        if (err instanceof ApiError && err.status === 404) {
+          setStudent(null)
+          setHistory([])
+          setNotFound(true)
+        }
+      })
+      .finally(() => { if (!cancelled) setFetching(false) })
+
+    return () => { cancelled = true }
+  }, [queriedId])
 
   const handleSearch = () => setQueriedId(searchId.trim().toUpperCase())
 
@@ -119,23 +107,29 @@ export default function AttendanceHistory() {
             transition={{ duration: 0.3 }}
             className="flex flex-col gap-3"
           >
-            {student ? (
+            {fetching && (
+              <div className="p-4 rounded-2xl bg-bg-card border border-bg-border animate-pulse h-16" />
+            )}
+
+            {!fetching && notFound && (
+              <div className="p-4 rounded-2xl bg-danger/5 border border-danger/20 text-danger text-sm">
+                No student found with ID <code className="font-mono">{queriedId}</code>
+              </div>
+            )}
+
+            {!fetching && student && (
               <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-bg-card border border-bg-border shadow-sm">
                 <div className="w-9 h-9 rounded-xl bg-accent/15 text-accent flex items-center justify-center font-bold text-sm">
                   {student.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
                 </div>
                 <div>
                   <p className="font-semibold text-ink-primary text-sm truncate">{student.name}</p>
-                  <p className="text-xs text-ink-muted">{student.id} · {student.program} · Year {student.year}</p>
+                  <p className="text-xs text-ink-muted">{queriedId} · {student.program} · Year {student.year}</p>
                 </div>
-              </div>
-            ) : (
-              <div className="p-4 rounded-2xl bg-danger/5 border border-danger/20 text-danger text-sm">
-                No student found with ID <code className="font-mono">{queriedId}</code>
               </div>
             )}
 
-            {student && history.length === 0 && (
+            {!fetching && student && history.length === 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -164,10 +158,12 @@ export default function AttendanceHistory() {
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: i * 0.07 }}
-                    onClick={() => navigate(`/history/course?id=${queriedId}&course=${course.courseId}`)}
+                    onClick={() => navigate(
+                      `/history/course?id=${queriedId}&course=${course.courseId}`,
+                      { state: { courseCode: course.courseCode, courseName: course.courseName } },
+                    )}
                     className="w-full text-left flex items-center gap-3 p-4 rounded-2xl bg-bg-card border border-bg-border shadow-sm hover:border-danger/30 hover:bg-bg-elevated hover:shadow-md transition-all duration-200"
                   >
-                    {/* Absence severity indicator */}
                     <div className={cn(
                       'w-1 self-stretch rounded-full flex-shrink-0',
                       unexcused > 0 ? 'bg-danger' : 'bg-warning'

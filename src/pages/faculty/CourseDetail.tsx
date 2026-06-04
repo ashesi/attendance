@@ -6,8 +6,10 @@ import { Button } from '../../components/ui/Button'
 import { SessionStatusBadge } from '../../components/ui/Badge'
 import { ConfirmModal } from '../../components/ui/Modal'
 import { SessionRowSkeleton } from '../../components/ui/Skeleton'
-import { mockCourses, mockSessions } from '../../data/mock'
+import { getMyCourses, getCourseSessions, deleteSession, ApiError } from '../../lib/api'
+import type { CourseWithSession } from '../../lib/api'
 import type { Session } from '../../types'
+import { groupSessionsByStatus } from '../../lib/sessionUtils'
 import { formatDate, cn } from '../../lib/utils'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import CreateSessionModal from './CreateSessionModal'
@@ -17,36 +19,64 @@ export default function CourseDetail() {
   const { courseId } = useParams()
   const navigate = useNavigate()
 
-  const course = mockCourses.find(c => c.id === courseId)
-  usePageTitle(course?.name ?? 'Course')
+  const [course, setCourse] = useState<CourseWithSession | null>(null)
   const [loading, setLoading] = useState(true)
-  const [sessions, setSessions] = useState<Session[]>(
-    mockSessions.filter(s => s.courseId === courseId)
-      .sort((a, b) => b.date.localeCompare(a.date))
-  )
-
+  const [sessions, setSessions] = useState<Session[]>([])
   const [showCreate, setShowCreate] = useState(false)
   const [cancelTarget, setCancelTarget] = useState<Session | null>(null)
 
+  usePageTitle(course?.name ?? 'Course')
+
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 300)
-    return () => clearTimeout(t)
-  }, [])
+    if (!courseId) return
+    let cancelled = false
 
-  const handleCancel = () => {
+    const refresh = async (showLoading: boolean) => {
+      if (showLoading) setLoading(true)
+      try {
+        const [courses, sess] = await Promise.all([getMyCourses(), getCourseSessions(courseId)])
+        if (cancelled) return
+        const c = courses.find((co) => co.id === courseId)
+        setCourse(c ?? null)
+        setSessions(sess)
+      } catch (err) {
+        if (cancelled) return
+        if (!(err instanceof ApiError && err.status === 401)) {
+          toast.error('Failed to load course')
+        }
+      } finally {
+        if (!cancelled && showLoading) setLoading(false)
+      }
+    }
+
+    void refresh(true)
+    const interval = setInterval(() => void refresh(false), 5000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [courseId])
+
+  const handleCancel = async () => {
     if (!cancelTarget) return
-    setSessions(prev => prev.filter(s => s.id !== cancelTarget.id))
-    toast.success('Session cancelled')
-    setCancelTarget(null)
+    try {
+      await deleteSession(cancelTarget.id)
+      setSessions(prev => prev.filter(s => s.id !== cancelTarget.id))
+      toast.success('Session cancelled')
+    } catch {
+      toast.error('Failed to cancel session')
+    } finally {
+      setCancelTarget(null)
+    }
   }
 
-  const grouped = {
-    open: sessions.filter(s => s.status === 'open'),
-    upcoming: sessions.filter(s => s.status === 'upcoming'),
-    closed: sessions.filter(s => s.status === 'closed'),
-  }
+  const grouped = groupSessionsByStatus(sessions)
 
-  if (!course) return null
+  if (!loading && !course) return (
+    <div className="flex items-center justify-center h-full">
+      <p className="text-sm text-ink-muted">Course not found.</p>
+    </div>
+  )
 
   return (
     <div className="flex flex-col h-full overflow-auto">
@@ -59,11 +89,13 @@ export default function CourseDetail() {
             <ArrowLeft size={16} />
           </button>
           <div>
-            <p className="text-base font-semibold text-ink-primary">{course.name}</p>
-            <p className="text-xs text-ink-muted">{course.code} · {course.cohort} · {course.enrolledCount} students</p>
+            <p className="text-base font-semibold text-ink-primary">{course?.name ?? '…'}</p>
+            <p className="text-xs text-ink-muted">
+              {course ? `${course.code} · ${course.cohort} · ${course.enrolledCount} students` : ''}
+            </p>
           </div>
         </div>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
+        <Button size="sm" onClick={() => setShowCreate(true)} disabled={loading}>
           <Plus size={14} />
           New Session
         </Button>
@@ -88,13 +120,19 @@ export default function CourseDetail() {
                   <div className="w-2.5 h-2.5 rounded-full bg-success" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-ink-primary">Live now · PIN <code className="font-mono text-success">{session.pin}</code></p>
+                  <p className="text-sm font-semibold text-ink-primary">
+                    Live now · <code className="font-mono text-success">{course?.cohortCode}</code>
+                  </p>
                   <p className="text-xs text-ink-muted mt-0.5">
                     {session.submissionsCount} of {session.totalStudents} submitted · closes {session.windowCloseTime}
                   </p>
                 </div>
               </div>
-              <Button size="sm" variant="success" onClick={() => navigate(`/faculty/sessions/${session.id}/live`)}>
+              <Button
+                size="sm"
+                variant="success"
+                onClick={() => navigate(`/faculty/sessions/${session.id}/live`, { state: { session, course } })}
+              >
                 Monitor
                 <ChevronRight size={14} />
               </Button>
@@ -124,7 +162,10 @@ export default function CourseDetail() {
                 key={session.id}
                 session={session}
                 index={i}
-                onClick={() => navigate(`/faculty/sessions/${session.id}/review`)}
+                onClick={() => navigate(
+                  `/faculty/sessions/${session.id}/review`,
+                  { state: { session, course } },
+                )}
               />
             ))}
           </Section>
@@ -145,11 +186,22 @@ export default function CourseDetail() {
         </>}
       </div>
 
-      <CreateSessionModal
-        open={showCreate}
-        onClose={() => setShowCreate(false)}
-        defaultCourseId={courseId}
-      />
+      {course && (
+        <CreateSessionModal
+          open={showCreate}
+          onClose={() => setShowCreate(false)}
+          defaultCourseId={courseId}
+          courseData={course}
+          onCreated={(session) => {
+            setSessions(prev => [session, ...prev])
+            if (session.status === 'open') {
+              navigate(`/faculty/sessions/${session.id}/live`, { state: { session, course } })
+            } else {
+              toast.success('Session scheduled. It will appear live at its start time.')
+            }
+          }}
+        />
+      )}
 
       <ConfirmModal
         open={!!cancelTarget}
@@ -158,7 +210,7 @@ export default function CourseDetail() {
         title="Cancel this session?"
         message={
           <p>
-            The session for <strong>{formatDate(cancelTarget?.date || '')}</strong> (PIN <code className="font-mono text-ink-secondary bg-bg-elevated px-1 py-0.5 rounded">{cancelTarget?.pin}</code>) will be cancelled and removed.
+            The session for <strong>{formatDate(cancelTarget?.date || '')}</strong> will be cancelled and removed.
             Students will not be able to submit attendance.
           </p>
         }
@@ -214,9 +266,6 @@ function SessionRow({
         </div>
         <p className="text-xs text-ink-muted mt-0.5">
           Window {session.windowOpenTime}–{session.windowCloseTime}
-          {session.status !== 'upcoming' && (
-            <> · PIN <code className="font-mono text-ink-secondary">{session.pin}</code></>
-          )}
         </p>
       </div>
 

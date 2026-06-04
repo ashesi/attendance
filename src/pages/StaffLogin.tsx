@@ -6,13 +6,14 @@ import { useAppStore } from '../store'
 import { Input } from '../components/ui/Input'
 import { Button } from '../components/ui/Button'
 import { usePageTitle } from '../hooks/usePageTitle'
+import { login, ApiError } from '../lib/api'
 import toast from 'react-hot-toast'
 
 type Role = 'faculty' | 'admin'
 
-const DEMO_CREDS: Record<Role, { id: string; email: string; name: string; password: string }> = {
-  faculty: { id: 'FAC001', email: 'r.ekumah@ashesi.edu.gh', name: 'Dr. Richard Ekumah', password: 'demo123' },
-  admin: { id: 'ADM001', email: 'admin@ashesi.edu.gh', name: 'Richard Ekumah', password: 'demo123' },
+const DEMO_CREDS: Record<Role, { email: string; password: string }> = {
+  faculty: { email: 'r.ekumah@ashesi.edu.gh', password: 'demo123' },
+  admin: { email: 'admin@ashesi.edu.gh', password: 'demo123' },
 }
 
 export default function StaffLogin() {
@@ -28,25 +29,22 @@ export default function StaffLogin() {
   const handleSignIn = async () => {
     if (!selectedRole) return
     setLoading(true)
-    const [, cred] = await Promise.all([
-      new Promise(r => setTimeout(r, 600)),
-      Promise.resolve(DEMO_CREDS[selectedRole]),
-    ])
-
-    const idMatch = identifier.trim().toLowerCase() === cred.email.toLowerCase()
-    const pwMatch = password === cred.password
-
-    if (!idMatch || !pwMatch) {
-      toast.error('Invalid credentials.')
+    try {
+      const { token, user } = await login(identifier.trim(), password)
+      setRole(user.role, user.id, user.name, token)
+      const first = user.name.split(' ')[0]
+      toast.success(`Welcome, ${first}`, { duration: 2000 })
+      if (user.role === 'faculty') navigate('/faculty/dashboard')
+      else navigate('/admin/dashboard')
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        toast.error('Invalid credentials.')
+      } else {
+        toast.error('Login failed — please try again.')
+      }
+    } finally {
       setLoading(false)
-      return
     }
-
-    setRole(selectedRole, cred.id, cred.name)
-    toast.success(`Welcome, ${cred.name.split(' ')[selectedRole === 'admin' ? 1 : 2] ?? cred.name.split(' ')[0]}`, { duration: 2000 })
-
-    if (selectedRole === 'faculty') navigate('/faculty/courses')
-    else navigate('/admin/dashboard')
   }
 
   return (
@@ -160,9 +158,9 @@ export default function StaffLogin() {
                 onKeyDown={e => e.key === 'Enter' && handleSignIn()}
               />
               <p className="text-xs text-ink-muted -mt-1">
-                Demo: <code className="text-accent font-mono">{DEMO_CREDS[selectedRole].email}</code>
+                Demo: <code className="text-accent font-mono">{DEMO_CREDS[selectedRole]?.email}</code>
                 {' · '}
-                <code className="text-accent font-mono">demo123</code>
+                <code className="text-accent font-mono">password123</code>
               </p>
               <Button fullWidth size="lg" onClick={handleSignIn} loading={loading}>
                 Sign In

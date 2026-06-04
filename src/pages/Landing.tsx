@@ -3,13 +3,44 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   MapPin, CheckCircle2, AlertCircle, GraduationCap,
-  History, User, Settings, Clock, WifiOff,
+  History, Settings, Clock, WifiOff,
 } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { LaptopScreenshotNotice, getStudentFirstName } from '../components/student/LaptopScreenshotNotice'
-import { mockSessions, mockCourses } from '../data/mock'
+import { submitAttendance, ApiError, getApiErrorMessage } from '../lib/api'
 import { usePageTitle } from '../hooks/usePageTitle'
 import toast from 'react-hot-toast'
+
+/**
+ * Returns a stable device fingerprint (SHA-256 hex, truncated to 32 chars).
+ *
+ * Mixes a persistent random ID stored in localStorage (survives page reloads
+ * but not incognito/cleared storage) with immutable browser properties
+ * (screen size, language, timezone, hardware concurrency). Together these
+ * make it meaningfully harder to submit on behalf of a classmate within the
+ * same session without changing devices or browsers.
+ */
+async function getDeviceFingerprint(): Promise<string> {
+  let persistentId = localStorage.getItem('attn_device_id')
+  if (!persistentId) {
+    persistentId = crypto.randomUUID()
+    localStorage.setItem('attn_device_id', persistentId)
+  }
+  const components = [
+    persistentId,
+    navigator.userAgent,
+    navigator.language,
+    `${screen.width}x${screen.height}`,
+    String(screen.colorDepth),
+    String(new Date().getTimezoneOffset()),
+    String(navigator.hardwareConcurrency ?? ''),
+  ].join('||')
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(components))
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32)
+}
 
 function getGreeting() {
   const h = new Date().getHours()
@@ -19,7 +50,7 @@ function getGreeting() {
   return 'Hey there'
 }
 
-type Stage = 'form' | 'locating' | 'success' | 'error'
+type Stage = 'form' | 'locating' | 'location_blocked' | 'success' | 'error'
 type ErrorCode = 'window_closed' | 'window_not_open' | 'duplicate_device' | 'invalid_pin'
 
 const ERROR_MESSAGES: Record<ErrorCode, { title: string; body: string; soft?: boolean }> = {
@@ -36,9 +67,8 @@ const ERROR_MESSAGES: Record<ErrorCode, { title: string; body: string; soft?: bo
     body: "Attendance for this session has already closed. If you were in class, speak to your lecturer.",
   },
   duplicate_device: {
-    title: "Already recorded",
-    body: "This device has already submitted attendance for this session. You're all set!",
-    soft: true,
+    title: "Device already used",
+    body: "Attendance has already been submitted from this device for this session. Each device can only be used once per session.",
   },
 }
 
@@ -48,6 +78,7 @@ export default function Landing() {
   const [pin, setPin] = useState('')
   const [studentId, setStudentId] = useState('')
   const [stage, setStage] = useState<Stage>('form')
+  const [locationBlockedReason, setLocationBlockedReason] = useState<'denied' | 'unavailable' | null>(null)
   const [error, setError] = useState<ErrorCode | null>(null)
   const [sessionInfo, setSessionInfo] = useState<{ courseName: string; courseCode: string } | null>(null)
   const [isOnline, setIsOnline] = useState(navigator.onLine)
@@ -55,8 +86,12 @@ export default function Landing() {
   const [recordedAt, setRecordedAt] = useState<Date | null>(null)
   const studentIdRef = useRef<HTMLInputElement>(null)
 
-  const normalisePin = (raw: string) => raw.toUpperCase().replace(/\s/g, '')
-  const isReady = normalisePin(pin).length >= 4 && studentId.trim().length >= 3
+  const normaliseCourseCode = (raw: string) => raw.toUpperCase().replace(/\s/g, '')
+  const isReady = normaliseCourseCode(pin).length >= 4 && studentId.trim().length >= 3
+
+  const fieldLabelClass = 'text-xs font-semibold text-ink-secondary uppercase tracking-wider'
+  const fieldInputClass =
+    'w-full h-11 px-4 bg-bg-surface border border-bg-border rounded-xl text-sm font-mono text-ink-primary uppercase tracking-wide placeholder:font-sans placeholder:normal-case placeholder:tracking-normal placeholder:text-ink-muted focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/50'
 
   // Online / offline detection
   useEffect(() => {
@@ -74,37 +109,89 @@ export default function Landing() {
     }
     setStage('locating')
     setIsLaptop(!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent))
-    await new Promise(r => setTimeout(r, 700))
 
-    const session = mockSessions.find(s => s.pin === normalisePin(pin))
-    if (!session) {
-      setError('invalid_pin')
-      setStage('error')
-      return
-    }
-    if (session.status === 'upcoming') {
-      setError('window_not_open')
-      setStage('error')
-      return
-    }
-    if (session.status === 'closed' || session.status === 'processing') {
-      setError('window_closed')
-      setStage('error')
+    // GPS is required — attendance cannot be submitted without coordinates.
+    // If the student denies permission or the device has no geolocation, show a
+    // blocking screen with instructions and do not submit.
+    if (!navigator.geolocation) {
+      setLocationBlockedReason('unavailable')
+      setStage('location_blocked')
       return
     }
 
-    await new Promise(r => setTimeout(r, 1000))
-    const course = mockCourses.find(c => c.id === session.courseId)
-    setSessionInfo({ courseName: course?.name || 'Unknown Course', courseCode: course?.code || '' })
-    setRecordedAt(new Date())
-    setStage('success')
-    toast.success('Attendance recorded')
+    let lat: number
+    let lng: number
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          timeout: 10000,
+          enableHighAccuracy: true,
+        }),
+      )
+      lat = pos.coords.latitude
+      lng = pos.coords.longitude
+    } catch (geoErr) {
+      const code = (geoErr as GeolocationPositionError).code
+      setLocationBlockedReason(code === 1 ? 'denied' : 'unavailable')
+      setStage('location_blocked')
+      return
+    }
+
+    const deviceFingerprint = await getDeviceFingerprint().catch(() => undefined)
+
+    try {
+      const result = await submitAttendance({
+        cohortCode: normaliseCourseCode(pin),
+        studentId: studentId.trim().toUpperCase(),
+        lat,
+        lng,
+        deviceFingerprint,
+      })
+      setSessionInfo({ courseName: result.courseName, courseCode: result.courseCode })
+      setRecordedAt(new Date())
+      setStage('success')
+      toast.success('Attendance recorded')
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const errCode = (err.body?.error as string) ?? ''
+        if (errCode === 'no_open_session') {
+          setError('invalid_pin')
+        } else if (errCode === 'window_not_open') {
+          setError('window_not_open')
+        } else if (errCode === 'window_closed') {
+          setError('window_closed')
+        } else if (errCode === 'duplicate_device') {
+          setError('duplicate_device')
+        } else if (errCode === 'duplicate_submission') {
+          const body = err.body as { courseName?: string; courseCode?: string }
+          setSessionInfo({
+            courseName: body.courseName ?? '',
+            courseCode: body.courseCode ?? '',
+          })
+          setError('duplicate_device')
+        } else if (errCode === 'student_not_found') {
+          toast.error('Student ID not found. Check your ID and try again.')
+          setStage('form')
+          return
+        } else {
+          toast.error(getApiErrorMessage(err))
+          setStage('form')
+          return
+        }
+      } else {
+        toast.error('Something went wrong. Please try again.')
+        setStage('form')
+        return
+      }
+      setStage('error')
+    }
   }
 
   const reset = () => {
     setPin('')
     setStudentId('')
     setStage('form')
+    setLocationBlockedReason(null)
     setError(null)
     setSessionInfo(null)
     setRecordedAt(null)
@@ -173,14 +260,14 @@ export default function Landing() {
               transition={{ duration: 0.25 }}
               className="glass rounded-2xl p-5 flex flex-col gap-5"
             >
-              {/* Course code */}
               <div className="flex flex-col gap-2">
-                <label className="text-xs font-semibold text-ink-secondary uppercase tracking-wider">
-                  Course Code
+                <label htmlFor="course-code" className={fieldLabelClass}>
+                  Course code
                 </label>
                 <input
+                  id="course-code"
                   type="text"
-                  placeholder="e.g. CS201_A"
+                  placeholder="e.g. CS222A"
                   maxLength={12}
                   value={pin}
                   onChange={e => setPin(e.target.value.toUpperCase().replace(/\s/g, ''))}
@@ -190,29 +277,29 @@ export default function Landing() {
                   autoCorrect="off"
                   autoCapitalize="characters"
                   spellCheck={false}
-                  className="w-full text-center bg-bg-surface border border-bg-border rounded-xl px-4 py-3 text-xl font-bold text-ink-primary placeholder:text-ink-muted placeholder:text-base placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/50 tracking-widest font-mono"
+                  className={fieldInputClass}
                 />
               </div>
 
-              {/* Student ID */}
               <div className="flex flex-col gap-2">
-                <label className="text-xs font-semibold text-ink-secondary uppercase tracking-wider">
+                <label htmlFor="student-id" className={fieldLabelClass}>
                   Student ID
                 </label>
-                <div className="relative">
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted pointer-events-none">
-                    <User size={15} />
-                  </div>
-                  <input
-                    ref={studentIdRef}
-                    type="text"
-                    placeholder="e.g. STU001"
-                    value={studentId}
-                    onChange={e => setStudentId(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && isReady && handleRecord()}
-                    className="w-full pl-9 pr-4 py-2.5 h-11 bg-bg-surface border border-bg-border rounded-xl text-sm text-ink-primary placeholder:text-ink-muted focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/50 uppercase"
-                  />
-                </div>
+                <input
+                  id="student-id"
+                  ref={studentIdRef}
+                  type="text"
+                  placeholder="e.g. XXXX2028"
+                  maxLength={16}
+                  value={studentId}
+                  onChange={e => setStudentId(e.target.value.toUpperCase().replace(/\s/g, ''))}
+                  onKeyDown={e => e.key === 'Enter' && isReady && handleRecord()}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  className={fieldInputClass}
+                />
               </div>
 
               {/* CTA */}
@@ -247,8 +334,10 @@ export default function Landing() {
                 </div>
               </div>
               <div className="text-center">
-                <p className="font-semibold text-ink-primary">Verifying location</p>
-                <p className="text-sm text-ink-secondary mt-1">Capturing GPS coordinates...</p>
+                <p className="font-semibold text-ink-primary">Requesting location</p>
+                <p className="text-sm text-ink-secondary mt-1">
+                  Tap <strong>"Allow"</strong> when your browser asks for location access
+                </p>
               </div>
               <div className="flex gap-1.5">
                 {[0, 1, 2].map(i => (
@@ -260,6 +349,45 @@ export default function Landing() {
                   />
                 ))}
               </div>
+              <p className="text-xs text-ink-muted text-center max-w-[220px] leading-relaxed">
+                Location is required to verify you're in the classroom.
+              </p>
+            </motion.div>
+          )}
+
+          {stage === 'location_blocked' && (
+            <motion.div
+              key="location_blocked"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.2 }}
+              className="glass rounded-2xl p-8 flex flex-col items-center gap-4 text-center"
+            >
+              <div className="w-14 h-14 rounded-full bg-warning/10 border-2 border-warning/20 flex items-center justify-center">
+                <MapPin size={26} className="text-warning" />
+              </div>
+              <div>
+                <p className="font-bold text-lg text-warning">Location required</p>
+                <p className="text-sm text-ink-secondary mt-1.5 leading-relaxed">
+                  {locationBlockedReason === 'denied'
+                    ? 'You denied location access. Attendance cannot be submitted without GPS — it\'s needed to verify you\'re in the classroom.'
+                    : 'Your device or browser doesn\'t support location access, which is required to submit attendance.'}
+                </p>
+              </div>
+              {locationBlockedReason === 'denied' && (
+                <div className="w-full px-3 py-3 rounded-xl bg-bg-surface border border-bg-border text-left space-y-1.5">
+                  <p className="text-xs font-semibold text-ink-secondary">How to enable location:</p>
+                  <p className="text-xs text-ink-muted leading-relaxed">
+                    <strong>Chrome / Android:</strong> tap the lock icon in the address bar → Site settings → Location → Allow
+                  </p>
+                  <p className="text-xs text-ink-muted leading-relaxed">
+                    <strong>Safari / iPhone:</strong> Settings → Safari → Location → Allow or tap the <em>AA</em> icon in the address bar
+                  </p>
+                </div>
+              )}
+              <Button fullWidth variant="secondary" onClick={reset}>
+                Try again
+              </Button>
             </motion.div>
           )}
 

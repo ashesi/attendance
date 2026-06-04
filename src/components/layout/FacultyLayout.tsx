@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { GraduationCap, LogOut } from 'lucide-react'
 import { useAppStore } from '../../store'
 import { Avatar } from '../ui/Avatar'
@@ -21,11 +21,33 @@ export function FacultyLayout({ children }: FacultyLayoutProps) {
     <div className="min-h-screen flex flex-col dot-grid">
       {/* Simple top bar */}
       <header className="h-14 flex items-center justify-between px-5 border-b border-bg-border bg-bg-surface/80 backdrop-blur-sm sticky top-0 z-20 flex-shrink-0">
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-4">
           <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center">
             <GraduationCap size={14} className="text-white" />
           </div>
           <span className="text-sm font-semibold text-ink-primary">Ashesi Attendance</span>
+          <nav className="hidden sm:flex items-center gap-1">
+            <NavLink
+              to="/faculty/dashboard"
+              className={({ isActive }) =>
+                `text-xs px-2.5 py-1.5 rounded-lg transition-colors ${
+                  isActive ? 'bg-accent/10 text-accent' : 'text-ink-muted hover:text-ink-secondary hover:bg-bg-elevated'
+                }`
+              }
+            >
+              Dashboard
+            </NavLink>
+            <NavLink
+              to="/faculty/courses"
+              className={({ isActive }) =>
+                `text-xs px-2.5 py-1.5 rounded-lg transition-colors ${
+                  isActive ? 'bg-accent/10 text-accent' : 'text-ink-muted hover:text-ink-secondary hover:bg-bg-elevated'
+                }`
+              }
+            >
+              Courses
+            </NavLink>
+          </nav>
         </div>
 
         <div className="flex items-center gap-3">

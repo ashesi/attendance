@@ -122,17 +122,31 @@ export default function Landing() {
     let lat: number
     let lng: number
     try {
+      // enableHighAccuracy: false → uses WiFi/cell location, which responds in
+      // < 2 s on iOS and Android (enableHighAccuracy forces the GPS radio which
+      // can take 15–30 s to lock indoors, causing spurious TIMEOUT errors even
+      // after the user has tapped "Allow").
       const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, {
-          timeout: 10000,
-          enableHighAccuracy: true,
+          timeout: 15000,
+          enableHighAccuracy: false,
         }),
       )
       lat = pos.coords.latitude
       lng = pos.coords.longitude
     } catch (geoErr) {
       const code = (geoErr as GeolocationPositionError).code
-      setLocationBlockedReason(code === 1 ? 'denied' : 'unavailable')
+      if (code === 1 /* PERMISSION_DENIED */) {
+        // User explicitly blocked location — show instructions.
+        setLocationBlockedReason('denied')
+        setStage('location_blocked')
+        return
+      }
+      // code 2 (POSITION_UNAVAILABLE) or code 3 (TIMEOUT) — device supports
+      // location and permission was (likely) granted, but a fix couldn't be
+      // obtained in time.  Show a different message so students know it's a
+      // signal issue, not a settings issue.
+      setLocationBlockedReason('unavailable')
       setStage('location_blocked')
       return
     }
@@ -370,18 +384,24 @@ export default function Landing() {
                 <p className="font-bold text-lg text-warning">Location required</p>
                 <p className="text-sm text-ink-secondary mt-1.5 leading-relaxed">
                   {locationBlockedReason === 'denied'
-                    ? 'You denied location access. Attendance cannot be submitted without GPS — it\'s needed to verify you\'re in the classroom.'
-                    : 'Your device or browser doesn\'t support location access, which is required to submit attendance.'}
+                    ? "You denied location access. Attendance can't be submitted without it — location verifies you're in the classroom."
+                    : "Couldn't get your location. This usually means weak GPS signal indoors."}
                 </p>
               </div>
-              {locationBlockedReason === 'denied' && (
+              {locationBlockedReason === 'denied' ? (
                 <div className="w-full px-3 py-3 rounded-xl bg-bg-surface border border-bg-border text-left space-y-1.5">
                   <p className="text-xs font-semibold text-ink-secondary">How to enable location:</p>
                   <p className="text-xs text-ink-muted leading-relaxed">
                     <strong>Chrome / Android:</strong> tap the lock icon in the address bar → Site settings → Location → Allow
                   </p>
                   <p className="text-xs text-ink-muted leading-relaxed">
-                    <strong>Safari / iPhone:</strong> Settings → Safari → Location → Allow or tap the <em>AA</em> icon in the address bar
+                    <strong>Safari / iPhone:</strong> tap the <em>AA</em> icon in the address bar → Website Settings → Location → Allow
+                  </p>
+                </div>
+              ) : (
+                <div className="w-full px-3 py-3 rounded-xl bg-bg-surface border border-bg-border text-left">
+                  <p className="text-xs text-ink-muted leading-relaxed">
+                    Try moving closer to a window or stepping outside briefly, then tap <strong>Try again</strong>. If the problem persists, speak to your lecturer.
                   </p>
                 </div>
               )}

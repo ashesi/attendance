@@ -70,7 +70,7 @@ export default function CreateSessionModal({ open, onClose, defaultCourseId, cou
         startTime: classStartTime,
         windowDuration: parseInt(windowDuration) || 5,
         minSamples: parseInt(minSamples) || 10,
-        epsilon: 50,
+        epsilon: 150,
       })
       toast.success('Session created')
       onClose()

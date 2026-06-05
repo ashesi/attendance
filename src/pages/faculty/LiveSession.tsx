@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Copy, CheckCheck, StopCircle, ArrowLeft } from 'lucide-react'
+import { Copy, CheckCheck, StopCircle, XCircle, ArrowLeft } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
 import { ConfirmModal } from '../../components/ui/Modal'
-import { getSession, getLiveSession, closeSession, openLiveStream, ApiError } from '../../lib/api'
+import { getSession, getLiveSession, closeSession, deleteSession, openLiveStream, ApiError } from '../../lib/api'
 import type { CourseWithSession } from '../../lib/api'
 import type { Session } from '../../types'
 import { usePageTitle } from '../../hooks/usePageTitle'
@@ -25,6 +25,8 @@ export default function LiveSession() {
   const [copied, setCopied] = useState(false)
   const [confirmClose, setConfirmClose] = useState(false)
   const [closing, setClosing] = useState(false)
+  const [confirmCancel, setConfirmCancel] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
 
   usePageTitle(`Live Session · ${course?.code ?? session?.courseId ?? ''}`)
 
@@ -90,6 +92,32 @@ export default function LiveSession() {
     return () => clearInterval(t)
   }, [timeLeft > 0])
 
+  const handleCancel = async () => {
+    if (!sessionId || !session) return
+    setConfirmCancel(false)
+    setCancelling(true)
+    // Close the SSE stream first so the onClosed callback doesn't fire and
+    // redirect to the review page for a session that is about to be deleted.
+    streamRef.current?.()
+    streamRef.current = null
+    try {
+      await deleteSession(sessionId)
+      toast.success('Session cancelled')
+      navigate(`/faculty/courses/${session.courseId}`)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && (err.body as { error?: string }).error === 'session_closed') {
+        // The background auto-close job beat us to it — session was already closed
+        // and attendance is finalized. Take the faculty to the review page.
+        toast('Session was already closed — showing attendance review')
+        navigate(`/faculty/sessions/${sessionId}/review`, { state: { session, course } })
+      } else {
+        const msg = err instanceof ApiError ? err.message : 'Failed to cancel session'
+        toast.error(msg)
+        setCancelling(false)
+      }
+    }
+  }
+
   const handleClose = async () => {
     if (!sessionId) return
     setConfirmClose(false)
@@ -150,10 +178,28 @@ export default function LiveSession() {
             <p className="text-xs text-ink-muted">{course?.code ?? ''} · {course?.name ?? ''}</p>
           </div>
         </div>
-        <Button variant="danger" size="sm" onClick={() => setConfirmClose(true)} loading={closing}>
-          <StopCircle size={14} />
-          Close Window
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setConfirmCancel(true)}
+            loading={cancelling}
+            disabled={closing}
+          >
+            <XCircle size={14} />
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => setConfirmClose(true)}
+            loading={closing}
+            disabled={cancelling}
+          >
+            <StopCircle size={14} />
+            Close Window
+          </Button>
+        </div>
       </div>
 
       {/* Body — centered */}
@@ -224,10 +270,26 @@ export default function LiveSession() {
         message={
           <p>
             <strong>{count}</strong> of <strong>{session.totalStudents}</strong> students have submitted so far.
-            Once closed, no more submissions will be accepted for this session.
+            Once closed, DBSCAN runs and attendance is finalised — no more submissions accepted.
           </p>
         }
         confirmLabel="Yes, close window"
+        cancelLabel="Keep it open"
+        danger
+      />
+
+      <ConfirmModal
+        open={confirmCancel}
+        onClose={() => setConfirmCancel(false)}
+        onConfirm={handleCancel}
+        title="Cancel this session?"
+        message={
+          <p>
+            The session will be deleted along with any attendance already submitted (<strong>{count}</strong> so far).
+            No students will be marked present or absent. This cannot be undone.
+          </p>
+        }
+        confirmLabel="Yes, cancel session"
         cancelLabel="Keep it open"
         danger
       />

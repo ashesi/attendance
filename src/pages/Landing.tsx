@@ -107,12 +107,14 @@ export default function Landing() {
       toast.error("You're offline — please check your connection and try again.")
       return
     }
+    console.log('getting current position')
     setStage('locating')
     setIsLaptop(!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent))
 
     // GPS is required — attendance cannot be submitted without coordinates.
     // If the student denies permission or the device has no geolocation, show a
     // blocking screen with instructions and do not submit.
+    console.log('navigator.geolocation', navigator.geolocation)
     if (!navigator.geolocation) {
       setLocationBlockedReason('unavailable')
       setStage('location_blocked')
@@ -126,17 +128,20 @@ export default function Landing() {
       // < 2 s on iOS and Android (enableHighAccuracy forces the GPS radio which
       // can take 15–30 s to lock indoors, causing spurious TIMEOUT errors even
       // after the user has tapped "Allow").
+      console.log('getting position')
       const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           timeout: 15000,
-          enableHighAccuracy: false,
+          enableHighAccuracy: true,
         }),
       )
       lat = pos.coords.latitude
       lng = pos.coords.longitude
+      console.log('position', lat, lng)
     } catch (geoErr) {
       const code = (geoErr as GeolocationPositionError).code
       if (code === 1 /* PERMISSION_DENIED */) {
+        console.log('permission denied')
         // User explicitly blocked location — show instructions.
         setLocationBlockedReason('denied')
         setStage('location_blocked')
@@ -146,6 +151,7 @@ export default function Landing() {
       // location and permission was (likely) granted, but a fix couldn't be
       // obtained in time.  Show a different message so students know it's a
       // signal issue, not a settings issue.
+      console.log('position unavailable')
       setLocationBlockedReason('unavailable')
       setStage('location_blocked')
       return

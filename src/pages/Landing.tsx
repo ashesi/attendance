@@ -380,29 +380,41 @@ export default function Landing() {
                 <p className="font-bold text-lg text-warning">Location required</p>
                 <p className="text-sm text-ink-secondary mt-1.5 leading-relaxed">
                   {locationBlockedReason === 'denied'
-                    ? "You denied location access. Attendance can't be submitted without it — location verifies you're in the classroom."
+                    ? "Location access is blocked. Both your phone settings and this website must allow location — follow the steps below, then tap Try again."
                     : "Couldn't get your location. This usually means weak GPS signal indoors."}
                 </p>
               </div>
               {locationBlockedReason === 'denied' ? (
                 <div className="w-full px-3 py-3 rounded-xl bg-bg-surface border border-bg-border text-left space-y-3">
                   <p className="text-xs font-semibold text-ink-secondary">How to enable location:</p>
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium text-ink-primary">iPhone (Safari or Chrome)</p>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-ink-primary">iPhone — Safari</p>
                     <p className="text-xs text-ink-muted leading-relaxed">
-                      1. Open the iPhone <strong>Settings</strong> app → Privacy &amp; Security → Location Services → <strong>Safari</strong> (or Chrome) → select <em>"Ask Next Time Or When I Share"</em>
+                      <strong>1. Phone settings:</strong> Settings → Privacy &amp; Security → Location Services → <strong>Safari</strong> → <em>Ask Next Time Or When I Share</em>
                     </p>
                     <p className="text-xs text-ink-muted leading-relaxed">
-                      2. Return here and tap <strong>Try again</strong> — allow location when your browser prompts you.
+                      <strong>2. Website settings:</strong> in Safari, tap the <em>AA</em> icon in the address bar → Website Settings → Location → <em>Allow</em>
+                    </p>
+                    <p className="text-xs text-ink-muted leading-relaxed">
+                      <strong>3.</strong> Return here and tap <strong>Try again</strong> — tap <em>Allow</em> if Safari prompts you.
                     </p>
                   </div>
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium text-ink-primary">Android (Chrome)</p>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-ink-primary">iPhone — Chrome</p>
                     <p className="text-xs text-ink-muted leading-relaxed">
-                      1. Open Android <strong>Settings</strong> → Apps → Chrome → Permissions → Location → select <em>"Ask every time"</em>
+                      <strong>1. Phone settings:</strong> Settings → Privacy &amp; Security → Location Services → <strong>Chrome</strong> → <em>Ask Next Time Or When I Share</em>
                     </p>
                     <p className="text-xs text-ink-muted leading-relaxed">
-                      2. Return here and tap <strong>Try again</strong> — allow location when Chrome prompts you.
+                      <strong>2.</strong> Return here and tap <strong>Try again</strong> — tap <em>Allow</em> if Chrome prompts you.
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-ink-primary">Android — Chrome</p>
+                    <p className="text-xs text-ink-muted leading-relaxed">
+                      <strong>1. Phone settings:</strong> Settings → Apps → Chrome → Permissions → Location → <em>Ask every time</em>
+                    </p>
+                    <p className="text-xs text-ink-muted leading-relaxed">
+                      <strong>2.</strong> Return here and tap <strong>Try again</strong> — tap <em>Allow</em> if Chrome prompts you.
                     </p>
                   </div>
                 </div>

@@ -44,6 +44,15 @@
     -webkit-text-fill-color: #0F172A;
     caret-color: #0F172A;
   }
+
+  /* iOS zooms focused inputs below 16px — keep app-like scale on touch devices */
+  @media (hover: none) and (pointer: coarse) {
+    input,
+    select,
+    textarea {
+      font-size: 16px;
+    }
+  }
 }
 
 @layer components {

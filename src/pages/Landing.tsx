@@ -107,14 +107,12 @@ export default function Landing() {
       toast.error("You're offline — please check your connection and try again.")
       return
     }
-    console.log('getting navigator.geolocation')
     setStage('locating')
     setIsLaptop(!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent))
 
-    // GPS is required — attendance cannot be submitted without coordinates.
+    // Location is required — attendance cannot be submitted without coordinates.
     // If the student denies permission or the device has no geolocation, show a
     // blocking screen with instructions and do not submit.
-    console.log('navigator.geolocation', navigator.geolocation)
     if (!navigator.geolocation) {
       setLocationBlockedReason('unavailable')
       setStage('location_blocked')
@@ -124,11 +122,9 @@ export default function Landing() {
     let lat: number
     let lng: number
     try {
-      // enableHighAccuracy: false → uses WiFi/cell location, which responds in
-      // < 2 s on iOS and Android (enableHighAccuracy forces the GPS radio which
-      // can take 15–30 s to lock indoors, causing spurious TIMEOUT errors even
-      // after the user has tapped "Allow").
-      console.log('getting position')
+      // enableHighAccuracy: false uses WiFi/cell triangulation — responds in
+      // < 2 s indoors vs 15–30 s for GPS, and doesn't require Precise Location
+      // on iOS 14+. Accuracy is sufficient to verify classroom presence.
       const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           timeout: 15000,
@@ -137,24 +133,15 @@ export default function Landing() {
       )
       lat = pos.coords.latitude
       lng = pos.coords.longitude
-      console.log('position', lat, lng)
     } catch (geoErr) {
       const code = (geoErr as GeolocationPositionError).code
-      const message = (geoErr as GeolocationPositionError).message
       if (code === 1 /* PERMISSION_DENIED */) {
-        console.log('permission denied')
-        console.log('message', message)
-        // User explicitly blocked location — show instructions.
         setLocationBlockedReason('denied')
         setStage('location_blocked')
         return
       }
-      // code 2 (POSITION_UNAVAILABLE) or code 3 (TIMEOUT) — device supports
-      // location and permission was (likely) granted, but a fix couldn't be
-      // obtained in time.  Show a different message so students know it's a
-      // signal issue, not a settings issue.
-      console.log('position unavailable')
-      console.log('message', message)
+      // code 2 (POSITION_UNAVAILABLE) or code 3 (TIMEOUT) — permission was
+      // granted but a fix couldn't be obtained; signal or hardware issue.
       setLocationBlockedReason('unavailable')
       setStage('location_blocked')
       return
@@ -398,14 +385,26 @@ export default function Landing() {
                 </p>
               </div>
               {locationBlockedReason === 'denied' ? (
-                <div className="w-full px-3 py-3 rounded-xl bg-bg-surface border border-bg-border text-left space-y-1.5">
+                <div className="w-full px-3 py-3 rounded-xl bg-bg-surface border border-bg-border text-left space-y-3">
                   <p className="text-xs font-semibold text-ink-secondary">How to enable location:</p>
-                  <p className="text-xs text-ink-muted leading-relaxed">
-                    <strong>Chrome / Android:</strong> tap the lock icon in the address bar → Site settings → Location → Allow
-                  </p>
-                  <p className="text-xs text-ink-muted leading-relaxed">
-                    <strong>Safari / iPhone:</strong> tap the <em>AA</em> icon in the address bar → Website Settings → Location → Allow
-                  </p>
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-ink-primary">iPhone (Safari or Chrome)</p>
+                    <p className="text-xs text-ink-muted leading-relaxed">
+                      1. Open the iPhone <strong>Settings</strong> app → Privacy &amp; Security → Location Services → <strong>Safari</strong> (or Chrome) → select <em>"Ask Next Time Or When I Share"</em>
+                    </p>
+                    <p className="text-xs text-ink-muted leading-relaxed">
+                      2. Return here and tap <strong>Try again</strong> — allow location when your browser prompts you.
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-ink-primary">Android (Chrome)</p>
+                    <p className="text-xs text-ink-muted leading-relaxed">
+                      1. Open Android <strong>Settings</strong> → Apps → Chrome → Permissions → Location → select <em>"Ask every time"</em>
+                    </p>
+                    <p className="text-xs text-ink-muted leading-relaxed">
+                      2. Return here and tap <strong>Try again</strong> — allow location when Chrome prompts you.
+                    </p>
+                  </div>
                 </div>
               ) : (
                 <div className="w-full px-3 py-3 rounded-xl bg-bg-surface border border-bg-border text-left">

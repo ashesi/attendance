@@ -107,7 +107,7 @@ export default function Landing() {
       toast.error("You're offline — please check your connection and try again.")
       return
     }
-    console.log('getting current position')
+    console.log('getting navigator.geolocation')
     setStage('locating')
     setIsLaptop(!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent))
 
@@ -132,7 +132,7 @@ export default function Landing() {
       const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           timeout: 15000,
-          enableHighAccuracy: true,
+          enableHighAccuracy: false,
         }),
       )
       lat = pos.coords.latitude
@@ -140,8 +140,10 @@ export default function Landing() {
       console.log('position', lat, lng)
     } catch (geoErr) {
       const code = (geoErr as GeolocationPositionError).code
+      const message = (geoErr as GeolocationPositionError).message
       if (code === 1 /* PERMISSION_DENIED */) {
         console.log('permission denied')
+        console.log('message', message)
         // User explicitly blocked location — show instructions.
         setLocationBlockedReason('denied')
         setStage('location_blocked')
@@ -152,6 +154,7 @@ export default function Landing() {
       // obtained in time.  Show a different message so students know it's a
       // signal issue, not a settings issue.
       console.log('position unavailable')
+      console.log('message', message)
       setLocationBlockedReason('unavailable')
       setStage('location_blocked')
       return

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, ChevronRight, XCircle, Clock, ArrowLeft } from 'lucide-react'
+import { Plus, ChevronRight, XCircle, Clock, ArrowLeft, Pencil } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
 import { SessionStatusBadge } from '../../components/ui/Badge'
 import { ConfirmModal } from '../../components/ui/Modal'
@@ -23,6 +23,7 @@ export default function CourseDetail() {
   const [loading, setLoading] = useState(true)
   const [sessions, setSessions] = useState<Session[]>([])
   const [showCreate, setShowCreate] = useState(false)
+  const [editTarget, setEditTarget] = useState<Session | null>(null)
   const [cancelTarget, setCancelTarget] = useState<Session | null>(null)
 
   usePageTitle(course?.name ?? 'Course')
@@ -148,6 +149,7 @@ export default function CourseDetail() {
                 key={session.id}
                 session={session}
                 index={i}
+                onEdit={() => setEditTarget(session)}
                 onCancel={() => setCancelTarget(session)}
               />
             ))}
@@ -203,6 +205,20 @@ export default function CourseDetail() {
         />
       )}
 
+      {course && (
+        <CreateSessionModal
+          open={!!editTarget}
+          onClose={() => setEditTarget(null)}
+          defaultCourseId={courseId}
+          courseData={course}
+          session={editTarget}
+          onUpdated={(session) => {
+            setSessions(prev => prev.map(s => (s.id === session.id ? session : s)))
+            setEditTarget(null)
+          }}
+        />
+      )}
+
       <ConfirmModal
         open={!!cancelTarget}
         onClose={() => setCancelTarget(null)}
@@ -235,11 +251,13 @@ function SessionRow({
   session,
   index,
   onClick,
+  onEdit,
   onCancel,
 }: {
   session: Session
   index: number
   onClick?: () => void
+  onEdit?: () => void
   onCancel?: () => void
 }) {
   const rate = session.totalStudents > 0
@@ -280,14 +298,27 @@ function SessionRow({
         </div>
       )}
 
-      {session.status === 'upcoming' && onCancel && (
-        <button
-          onClick={e => { e.stopPropagation(); onCancel() }}
-          className="flex items-center gap-1.5 text-xs text-ink-muted hover:text-danger transition-colors px-2 py-1 rounded-lg hover:bg-danger/10"
-        >
-          <XCircle size={14} />
-          Cancel
-        </button>
+      {session.status === 'upcoming' && (onEdit || onCancel) && (
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {onEdit && (
+            <button
+              onClick={e => { e.stopPropagation(); onEdit() }}
+              className="flex items-center gap-1.5 text-xs text-ink-muted hover:text-accent transition-colors px-2 py-1 rounded-lg hover:bg-accent/10"
+            >
+              <Pencil size={14} />
+              Edit
+            </button>
+          )}
+          {onCancel && (
+            <button
+              onClick={e => { e.stopPropagation(); onCancel() }}
+              className="flex items-center gap-1.5 text-xs text-ink-muted hover:text-danger transition-colors px-2 py-1 rounded-lg hover:bg-danger/10"
+            >
+              <XCircle size={14} />
+              Cancel
+            </button>
+          )}
+        </div>
       )}
 
       {isClickable && (

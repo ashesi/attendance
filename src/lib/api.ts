@@ -216,6 +216,16 @@ export async function deleteSession(sessionId: string) {
   return apiFetch<void>(`/sessions/${sessionId}`, { method: 'DELETE' })
 }
 
+export async function updateSession(
+  sessionId: string,
+  body: { date: string; startTime: string; windowDuration: number; minSamples: number; epsilon: number },
+) {
+  return apiFetch<Session>(`/sessions/${sessionId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
 export async function getLiveSession(sessionId: string) {
   return apiFetch<{ submissionsCount: number; secondsRemaining: number; status: Session['status'] }>(
     `/sessions/${sessionId}/live`,

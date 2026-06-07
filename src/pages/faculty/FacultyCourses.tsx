@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { BookOpen, Users, ChevronRight, Calendar } from 'lucide-react'
+import { BookOpen, ChevronRight, Calendar } from 'lucide-react'
 import { SessionStatusBadge } from '../../components/ui/Badge'
 import { CourseCardSkeleton } from '../../components/ui/Skeleton'
 import { getMyCourses, ApiError } from '../../lib/api'
 import type { CourseWithSession } from '../../lib/api'
 import { usePageTitle } from '../../hooks/usePageTitle'
-import { formatDate } from '../../lib/utils'
+import { formatNextSessionDate } from '../../lib/utils'
 import toast from 'react-hot-toast'
 
 export default function FacultyCourses() {
@@ -72,18 +72,16 @@ export default function FacultyCourses() {
                   <div className="flex items-center gap-2">
                     <p className="text-xs font-mono text-ink-muted">{course.code}</p>
                     {isLive && <SessionStatusBadge status="open" />}
-                    {isUpcoming && !isLive && <SessionStatusBadge status="upcoming" />}
                   </div>
                   <p className="text-sm font-semibold text-ink-primary mt-0.5 truncate">{course.name}</p>
                   <div className="flex items-center gap-3 mt-1">
                     <span className="flex items-center gap-1 text-xs text-ink-muted">
-                      <Users size={10} />
-                      {course.enrolledCount} students
+                      {course.cohort} · {course.enrolledCount} students
                     </span>
                     {isUpcoming && !isLive && ls && (
                       <span className="flex items-center gap-1 text-xs text-ink-muted">
                         <Calendar size={10} />
-                        Next: {formatDate(ls.date)}
+                        Next: {formatNextSessionDate(ls.date)}
                       </span>
                     )}
                     {isLive && ls && (

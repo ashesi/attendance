@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Copy, CheckCheck, StopCircle, XCircle, ArrowLeft } from 'lucide-react'
+import { Copy, CheckCheck, StopCircle, XCircle, ArrowLeft, Pencil } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
 import { ConfirmModal } from '../../components/ui/Modal'
 import { getSession, getLiveSession, closeSession, deleteSession, openLiveStream, ApiError } from '../../lib/api'
 import type { CourseWithSession } from '../../lib/api'
 import type { Session } from '../../types'
 import { usePageTitle } from '../../hooks/usePageTitle'
+import CreateSessionModal from './CreateSessionModal'
 import toast from 'react-hot-toast'
 
 export default function LiveSession() {
@@ -27,6 +28,7 @@ export default function LiveSession() {
   const [closing, setClosing] = useState(false)
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [showEdit, setShowEdit] = useState(false)
 
   usePageTitle(`Live Session · ${course?.code ?? session?.courseId ?? ''}`)
 
@@ -179,6 +181,17 @@ export default function LiveSession() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {liveStatus === 'upcoming' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowEdit(true)}
+              disabled={cancelling || closing}
+            >
+              <Pencil size={14} />
+              Edit
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -293,6 +306,21 @@ export default function LiveSession() {
         cancelLabel="Keep it open"
         danger
       />
+
+      {course && (
+        <CreateSessionModal
+          open={showEdit}
+          onClose={() => setShowEdit(false)}
+          defaultCourseId={session.courseId}
+          courseData={course}
+          session={session}
+          onUpdated={(updated) => {
+            setSession(updated)
+            setLiveStatus(updated.status)
+            setShowEdit(false)
+          }}
+        />
+      )}
     </div>
   )
 }

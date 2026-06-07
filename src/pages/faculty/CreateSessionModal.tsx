@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Info, Clock, AlertTriangle, ChevronDown } from 'lucide-react'
 import { Modal } from '../../components/ui/Modal'
-import { Input, Select } from '../../components/ui/Input'
+import { Input } from '../../components/ui/Input'
 import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
-import { createSession, ApiError, getApiErrorMessage } from '../../lib/api'
+import { createSession, updateSession, ApiError, getApiErrorMessage } from '../../lib/api'
 import type { CourseWithSession } from '../../lib/api'
 import type { Session } from '../../types'
 import toast from 'react-hot-toast'
@@ -14,7 +14,9 @@ interface Props {
   onClose: () => void
   defaultCourseId?: string
   courseData?: CourseWithSession
+  session?: Session | null
   onCreated?: (session: Session) => void
+  onUpdated?: (session: Session) => void
 }
 
 const MIN_SAMPLES_DISCLAIMER = `min_samples controls how many GPS points DBSCAN requires to form a "cluster" (group of students physically present together).
@@ -40,7 +42,22 @@ function defaultStartTime(schedule: string): string {
   return match ? match[1] : '08:00'
 }
 
-export default function CreateSessionModal({ open, onClose, defaultCourseId, courseData, onCreated }: Props) {
+function windowDurationFromSession(session: Session): number {
+  const [oh, om] = session.windowOpenTime.split(':').map(Number)
+  const [ch, cm] = session.windowCloseTime.split(':').map(Number)
+  return (ch * 60 + cm) - (oh * 60 + om)
+}
+
+export default function CreateSessionModal({
+  open,
+  onClose,
+  defaultCourseId,
+  courseData,
+  session,
+  onCreated,
+  onUpdated,
+}: Props) {
+  const isEdit = !!session
   const selectedCourse = courseData
 
   const [sessionDate, setSessionDate] = useState(todayISO())
@@ -53,6 +70,26 @@ export default function CreateSessionModal({ open, onClose, defaultCourseId, cou
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [loading, setLoading] = useState(false)
 
+  useEffect(() => {
+    if (!open) return
+    if (session) {
+      setSessionDate(session.date)
+      setClassStartTime(session.startTime)
+      setWindowDuration(String(windowDurationFromSession(session)))
+      setMinSamples(String(session.minSamples))
+      setShowAdvanced(session.minSamples !== 10)
+    } else {
+      setSessionDate(todayISO())
+      setClassStartTime(selectedCourse ? defaultStartTime(selectedCourse.schedule) : '08:00')
+      setWindowDuration('5')
+      setMinSamples('10')
+      setShowAdvanced(false)
+    }
+    setShowDisclaimer(false)
+    // Only seed when the modal opens or a different session is selected —
+    // not when parent polling refreshes course/session object references.
+  }, [open, session?.id])
+
   const windowClose = addMinutes(classStartTime, parseInt(windowDuration) || 5)
 
   const handleMinSamplesChange = (val: string) => {
@@ -61,27 +98,38 @@ export default function CreateSessionModal({ open, onClose, defaultCourseId, cou
     setMinSamples(val)
   }
 
-  const handleCreate = async () => {
-    if (!defaultCourseId) return
+  const handleSubmit = async () => {
+    const payload = {
+      date: sessionDate,
+      startTime: classStartTime,
+      windowDuration: parseInt(windowDuration) || 5,
+      minSamples: parseInt(minSamples) || 10,
+      epsilon: session?.epsilon ?? 150,
+    }
+
     setLoading(true)
     try {
-      const session = await createSession(defaultCourseId, {
-        date: sessionDate,
-        startTime: classStartTime,
-        windowDuration: parseInt(windowDuration) || 5,
-        minSamples: parseInt(minSamples) || 10,
-        epsilon: 150,
-      })
-      toast.success('Session created')
-      onClose()
-      onCreated?.(session)
+      if (isEdit && session) {
+        const updated = await updateSession(session.id, payload)
+        toast.success('Session updated')
+        onClose()
+        onUpdated?.(updated)
+      } else {
+        if (!defaultCourseId) return
+        const created = await createSession(defaultCourseId, payload)
+        toast.success('Session created')
+        onClose()
+        onCreated?.(created)
+      }
     } catch (err) {
       if (err instanceof ApiError && (err.body?.error as string) === 'session_already_open') {
         toast.error('A session for this course is already open.')
+      } else if (err instanceof ApiError && (err.body?.error as string) === 'session_not_editable') {
+        toast.error('This session can no longer be edited.')
       } else if (err instanceof ApiError) {
         toast.error(getApiErrorMessage(err))
       } else {
-        toast.error('Failed to create session. Please try again.')
+        toast.error(isEdit ? 'Failed to update session. Please try again.' : 'Failed to create session. Please try again.')
       }
     } finally {
       setLoading(false)
@@ -93,14 +141,23 @@ export default function CreateSessionModal({ open, onClose, defaultCourseId, cou
       <Modal
         open={open && !showDisclaimer}
         onClose={onClose}
-        title="Create Session"
-        description="Students submit attendance using the course code and their student ID"
+        title={isEdit ? 'Edit Session' : 'Create Session'}
+        description={
+          isEdit
+            ? 'Update the date, time, or settings for this upcoming session'
+            : 'Students submit attendance using the course code and their student ID'
+        }
         size="md"
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-            <Button size="sm" onClick={handleCreate} loading={loading} disabled={!defaultCourseId}>
-              Create Session
+            <Button
+              size="sm"
+              onClick={handleSubmit}
+              loading={loading}
+              disabled={!isEdit && !defaultCourseId}
+            >
+              {isEdit ? 'Save Changes' : 'Create Session'}
             </Button>
           </>
         }

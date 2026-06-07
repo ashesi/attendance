@@ -18,6 +18,20 @@ export function formatDate(dateStr: string) {
   })
 }
 
+/** For upcoming session labels — shows "today" when the session date is today. */
+export function formatNextSessionDate(dateStr: string) {
+  const session = new Date(`${dateStr.slice(0, 10)}T12:00:00`)
+  const now = new Date()
+  if (
+    session.getFullYear() === now.getFullYear() &&
+    session.getMonth() === now.getMonth() &&
+    session.getDate() === now.getDate()
+  ) {
+    return 'Today'
+  }
+  return formatDate(dateStr)
+}
+
 export function statusLabel(status: AttendanceStatus) {
   const map: Record<AttendanceStatus, string> = {
     recorded: 'Recorded',
